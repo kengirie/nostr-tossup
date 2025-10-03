@@ -1,0 +1,65 @@
+# OCaml build artifacts
+*.cmo
+*.cmi
+*.cma
+*.cmx
+*.cmxa
+*.a
+*.o
+*.so
+*.dylib
+*.native
+*.byte
+
+# OCaml compiler intermediate files
+*.annot
+*.cmt
+*.cmti
+*.spot
+*.spit
+
+# Dune build directory
+_build/
+
+# Opam local switches
+_opam/
+
+# Merlin configuration
+.merlin
+
+# OCaml toplevel history
+.ocamlinit
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Coverage reports
+bisect*.coverage
+_coverage/
+
+# Documentation generation
+*.odoc
+_doc/
+
+# Utop
+.utoprc*

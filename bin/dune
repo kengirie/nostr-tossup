@@ -1,0 +1,4 @@
+(executable
+ (public_name nostr-tossup)
+ (name main)
+ (libraries nostr_tossup piaf yojson eio_main))
