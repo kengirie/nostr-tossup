@@ -2,7 +2,10 @@ open Eio.Std
 module Ws = Piaf.Ws
 
 (* Nostr relay configuration *)
-let nostr_relay = "https://relay.damus.io"
+let nostr_relays = [
+  "https://relay.damus.io";
+  "https://nos.lol";
+]
 
 (* Reconnection settings *)
 let max_reconnect_attempts = 5
@@ -21,7 +24,7 @@ let create_request subscription_id =
     ]
 
 (* Receive and process WebSocket messages from the Nostr relay *)
-let rec recv_loop messages =
+let rec recv_loop relay_name messages =
   match Piaf.Stream.take messages with
   | Some (_opcode, iovec) ->
     (* Extract string data from WebSocket frame *)
@@ -30,17 +33,19 @@ let rec recv_loop messages =
        let json = Yojson.Safe.from_string received_string in
        match json with
        | `List [ `String "EVENT"; _sub_id; event_obj ] ->
-         traceln "Received event: %s" (Yojson.Safe.to_string event_obj)
+         traceln "Received event from %s: %s" relay_name (Yojson.Safe.to_string event_obj)
        | _ -> ()
      with
      | Yojson.Json_error msg ->
        traceln "JSON parse error: %s" msg);
-    recv_loop messages
+    recv_loop relay_name messages
   | None ->
     traceln "Connection closed"
 
-(* Establish a single WebSocket connection to the Nostr relay *)
-let connect_once ~config ~sw env uri subscription_id =
+(* Establish a single WebSocket connection to a Nostr relay *)
+let connect_to_relay ~config ~sw env relay_url subscription_id =
+  let uri = Uri.of_string relay_url in
+  traceln "Attempting to connect to %s" relay_url;
   match Piaf.Client.create ~config ~sw env uri with
   | Error e ->
     traceln "Error creating client: %a" Piaf.Error.pp_hum e;
@@ -62,7 +67,7 @@ let connect_once ~config ~sw env uri subscription_id =
          traceln "Sent JSON:\n%s" pretty_json;
 
          let messages = Ws.Descriptor.messages ws_descriptor in
-         recv_loop messages
+         recv_loop relay_url messages
        with
        | Failure msg ->
          traceln "Connection error: %s" msg;
@@ -71,16 +76,16 @@ let connect_once ~config ~sw env uri subscription_id =
          traceln "Unexpected error: %s" (Printexc.to_string e);
          raise e)
 
-(* Retry connection with exponential backoff *)
-let rec connect_with_retry ~config env uri subscription_id attempt =
+(* Connect to a single relay with retry logic *)
+let rec connect_with_retry ~config env relay_url subscription_id attempt =
   if attempt > max_reconnect_attempts then (
     traceln "Max reconnection attempts (%d) reached. Giving up." max_reconnect_attempts;
     failwith "Max retries exceeded"
   ) else (
-    traceln "Connection attempt %d/%d" attempt max_reconnect_attempts;
+    traceln "Connection attempt %d/%d to %s" attempt max_reconnect_attempts relay_url;
     try
       Switch.run (fun sw ->
-        connect_once ~config ~sw env uri subscription_id
+        connect_to_relay ~config ~sw env relay_url subscription_id
       )
     with
     | Failure msg ->
@@ -88,7 +93,7 @@ let rec connect_with_retry ~config env uri subscription_id attempt =
       if attempt < max_reconnect_attempts then (
         traceln "Waiting %.1f seconds before retry..." reconnect_delay;
         Eio.Time.sleep (Eio.Stdenv.clock env) reconnect_delay;
-        connect_with_retry ~config env uri subscription_id (attempt + 1)
+        connect_with_retry ~config env relay_url subscription_id (attempt + 1)
       ) else (
         traceln "All retry attempts exhausted";
         failwith msg
@@ -98,10 +103,33 @@ let rec connect_with_retry ~config env uri subscription_id attempt =
       if attempt < max_reconnect_attempts then (
         traceln "Waiting %.1f seconds before retry..." reconnect_delay;
         Eio.Time.sleep (Eio.Stdenv.clock env) reconnect_delay;
-        connect_with_retry ~config env uri subscription_id (attempt + 1)
+        connect_with_retry ~config env relay_url subscription_id (attempt + 1)
       ) else
         raise e
   )
+
+(* Connect to multiple relays concurrently using Eio fibers *)
+let connect_to_all_relays env config subscription_id =
+  let connect_to_single_relay relay_url =
+    fun () ->
+      try
+        connect_with_retry ~config env relay_url subscription_id 1;
+        traceln "Successfully connected to %s" relay_url
+      with
+      | Failure msg ->
+        traceln "Failed to connect to %s: %s" relay_url msg
+      | e ->
+        traceln "Unexpected error with %s: %s" relay_url (Printexc.to_string e)
+  in
+
+  (* Create fibers for all relays *)
+  let relay_fibers = List.map connect_to_single_relay nostr_relays in
+
+  (* Run all connections concurrently *)
+  match relay_fibers with
+  | [] -> traceln "No relays configured"
+  | fibers ->
+    Fiber.all fibers
 
 (* Main application entry point *)
 let main env =
@@ -109,15 +137,14 @@ let main env =
     let open Piaf.Config in
     { default with max_http_version = Piaf.Versions.HTTP.HTTP_1_1 }
   in
-  let uri = Uri.of_string nostr_relay in
   let subscription_id = "my_sub" in
 
   try
-    connect_with_retry ~config env uri subscription_id 1;
-    traceln "Connection completed successfully"
+    connect_to_all_relays env config subscription_id;
+    traceln "All relay connections completed"
   with
   | Failure msg ->
-    traceln "Failed to establish connection: %s" msg
+    traceln "Failed to establish connections: %s" msg
   | e ->
     traceln "Unexpected error: %s" (Printexc.to_string e)
 
