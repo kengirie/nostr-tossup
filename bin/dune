@@ -1,5 +1,5 @@
 (executable
  (public_name nostr-tossup)
  (name main)
- (modules main config)
+ (modules main config nostr_connection)
  (libraries nostr_tossup piaf yojson eio_main))
