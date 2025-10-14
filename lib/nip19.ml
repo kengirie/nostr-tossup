@@ -9,25 +9,33 @@ let rev_table =
 
 let polymod values =
   let generators = [| 0x3b6a57b2; 0x26508e6d; 0x1ea119fa; 0x3d4233dd; 0x2a1462b3 |] in
-  let chk = ref 1 in
-  List.iter
-    (fun value ->
-       let top = !chk lsr 25 in
-       chk := ((!chk land 0x1ffffff) lsl 5) lxor value;
-       for i = 0 to 4 do
-         if ((top lsr i) land 1) = 1 then chk := !chk lxor generators.(i)
-       done)
-    values;
-  !chk
+  let rec apply_generators top chk idx =
+    if idx > 4 then chk
+    else
+      let chk' =
+        if ((top lsr idx) land 1) = 1 then chk lxor generators.(idx) else chk
+      in
+      apply_generators top chk' (idx + 1)
+  in
+  let rec loop chk = function
+    | [] -> chk
+    | value :: rest ->
+      let top = chk lsr 25 in
+      let chk' = ((chk land 0x1ffffff) lsl 5) lxor value in
+      let chk'' = apply_generators top chk' 0 in
+      loop chk'' rest
+  in
+  loop 1 values
 
 let hrp_expand hrp =
   let len = String.length hrp in
-  let expanded = Array.make (len * 2 + 1) 0 in
-  for i = 0 to len - 1 do
-    expanded.(i) <- Char.code hrp.[i] lsr 5;
-    expanded.(len + 1 + i) <- Char.code hrp.[i] land 31
-  done;
-  Array.to_list expanded
+  let rec loop idx high low =
+    if idx = len then List.rev high @ (0 :: List.rev low)
+    else
+      let code = Char.code hrp.[idx] in
+      loop (idx + 1) ((code lsr 5) :: high) ((code land 31) :: low)
+  in
+  loop 0 [] []
 
 let verify_checksum hrp data =
   polymod (hrp_expand hrp @ data) = 1
@@ -38,38 +46,43 @@ let create_checksum hrp data =
   List.init 6 (fun i -> (pm lsr (5 * (5 - i))) land 31)
 
 let convertbits ~data ~frombits ~tobits ~pad =
-  let acc = ref 0 in
-  let bits = ref 0 in
   let maxv = (1 lsl tobits) - 1 in
-  let result = ref [] in
-  let rec process = function
-    | [] ->
-      if pad then (
-        if !bits > 0 then (
-          let value = (!acc lsl (tobits - !bits)) land maxv in
-          result := value :: !result
-        );
-        Ok (List.rev !result)
-      ) else if !bits >= frombits then
-        Error "convertbits: excess padding"
-      else if (!acc lsl (tobits - !bits)) land maxv <> 0 then
-        Error "convertbits: non-zero padding"
-      else
-        Ok (List.rev !result)
+  let rec finalize bits acc result =
+    if pad then
+      let result =
+        if bits > 0 then
+          let value = (acc lsl (tobits - bits)) land maxv in
+          value :: result
+        else
+          result
+      in
+      Ok (List.rev result)
+    else if bits >= frombits then
+      Error "convertbits: excess padding"
+    else if ((acc lsl (tobits - bits)) land maxv) <> 0 then
+      Error "convertbits: non-zero padding"
+    else
+      Ok (List.rev result)
+  and extract acc bits result =
+    if bits >= tobits then
+      let bits = bits - tobits in
+      let value = (acc lsr bits) land maxv in
+      extract acc bits (value :: result)
+    else
+      (acc, bits, result)
+  and process data acc bits result =
+    match data with
+    | [] -> finalize bits acc result
     | value :: rest ->
       if value < 0 || value >= (1 lsl frombits) then
         Error "convertbits: invalid value"
-      else (
-        acc := (!acc lsl frombits) lor value;
-        bits := !bits + frombits;
-        while !bits >= tobits do
-          bits := !bits - tobits;
-          let new_value = (!acc lsr !bits) land maxv in
-          result := new_value :: !result
-        done;
-        process rest)
+      else
+        let acc = (acc lsl frombits) lor value in
+        let bits = bits + frombits in
+        let acc, bits, result = extract acc bits result in
+        process rest acc bits result
   in
-  process data
+  process data 0 0 []
 
 let decode_bech32 str =
   let lowercase = String.lowercase_ascii str in
