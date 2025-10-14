@@ -12,6 +12,12 @@ bug-reports: "https://github.com/username/reponame/issues"
 depends: [
   "dune" {>= "3.20"}
   "ocaml"
+  "eio"
+  "piaf"
+  "yojson"
+  "ctypes"
+  "ctypes-foreign"
+  "sha"
   "odoc" {with-doc}
 ]
 build: [

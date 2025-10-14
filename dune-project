@@ -19,7 +19,14 @@
  (name nostr-tossup)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml)
+ (depends
+  ocaml
+  eio
+  piaf
+  yojson
+  ctypes
+  ctypes-foreign
+  sha)
  (tags
   ("add topics" "to describe" your project)))
 

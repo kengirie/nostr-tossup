@@ -51,8 +51,19 @@ let rec recv_loop relay_name messages ws_descriptor state =
     traceln "[%s] Connection closed" relay_name;
     raise (Failure "Connection closed")
 
+let send_initial_event relay_url ws_descriptor event =
+  let open Nostr_event in
+  match event with
+  | None -> ()
+  | Some { message; id; _ } ->
+    (try
+       Ws.Descriptor.send_string ws_descriptor message;
+       traceln "[%s] Published kind 1 event %s" relay_url id
+     with e ->
+       traceln "[%s] Failed to publish event: %s" relay_url (Printexc.to_string e))
+
 (* Establish a single WebSocket connection to a Nostr relay *)
-let connect_to_relay ~config ~sw env relay_url subscription_id =
+let connect_to_relay ~config ~sw env relay_url subscription_id event =
   let uri = Uri.of_string relay_url in
   (* Create connection state *)
   let state = { last_eose = Unix.gettimeofday () } in
@@ -76,6 +87,8 @@ let connect_to_relay ~config ~sw env relay_url subscription_id =
          Ws.Descriptor.send_string ws_descriptor request_string;
          let pretty_json = Yojson.Safe.pretty_to_string request in
          traceln "Sent JSON:\n%s" pretty_json;
+
+         send_initial_event relay_url ws_descriptor event;
 
          let messages = Ws.Descriptor.messages ws_descriptor in
 
@@ -118,13 +131,13 @@ let connect_to_relay ~config ~sw env relay_url subscription_id =
          raise e)
 
 (* Connect to multiple relays concurrently using Eio fibers *)
-let connect_to_all_relays env config subscription_id =
+let connect_to_all_relays env config subscription_id event =
   let connect_to_single_relay relay_url =
     fun () ->
       let rec retry_loop attempt =
         try
           Switch.run (fun sw ->
-            connect_to_relay ~config ~sw env relay_url subscription_id
+            connect_to_relay ~config ~sw env relay_url subscription_id event
           )
         with
         | Failure msg ->
