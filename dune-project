@@ -26,6 +26,10 @@
   yojson
   ctypes
   ctypes-foreign
+  caqti
+  caqti-driver-sqlite3
+  caqti-eio
+  uri
   sha)
  (tags
   ("add topics" "to describe" your project)))

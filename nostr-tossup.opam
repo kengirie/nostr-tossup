@@ -17,6 +17,10 @@ depends: [
   "yojson"
   "ctypes"
   "ctypes-foreign"
+  "caqti"
+  "caqti-driver-sqlite3"
+  "caqti-eio"
+  "uri"
   "sha"
   "odoc" {with-doc}
 ]

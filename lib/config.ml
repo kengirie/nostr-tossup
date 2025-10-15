@@ -5,7 +5,7 @@ let nostr_relays = [
 ]
 
 (* Reconnection settings *)
-let reconnect_delay = 2.0
+let reconnect_delay = 20.0
 
 (* Keep-alive settings *)
 let keepalive_interval = 30.0  (* Send keepalive REQ every 30 seconds *)

@@ -14,7 +14,7 @@ let create_request subscription_id =
       `String subscription_id;
       `Assoc [
         ("kinds", `List [`Int 1]);
-        ("limit", `Int 5)
+        ("limit", `Int 1)
       ];
     ]
 
@@ -67,7 +67,7 @@ let connect_to_relay ~config ~sw env relay_url subscription_id event =
   let uri = Uri.of_string relay_url in
   (* Create connection state *)
   let state = { last_eose = Unix.gettimeofday () } in
-  
+
   match Piaf.Client.create ~config ~sw env uri with
   | Error e ->
     traceln "[%s] Error creating client: %a" relay_url Piaf.Error.pp_hum e;

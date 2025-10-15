@@ -1,4 +1,17 @@
 (library
  (name nostr_tossup)
- (libraries piaf yojson eio_main ctypes ctypes.foreign sha unix)
+ (libraries
+  piaf
+  yojson
+  eio_main
+  eio
+  caqti
+  caqti-eio.unix
+  caqti-eio
+  caqti-driver-sqlite3
+  uri
+  ctypes
+  ctypes.foreign
+  sha
+  unix)
  (c_library_flags -lsecp256k1))
