@@ -10,11 +10,15 @@ module Hex = struct
   let bytes_to_hex bytes =
     let len = Bytes.length bytes in
     let buf = Bytes.create (len * 2) in
-    for i = 0 to len - 1 do
-      let v = int_of_char (Bytes.get bytes i) land 0xff in
-      Bytes.set buf (2 * i) hex_chars.[v lsr 4];
-      Bytes.set buf ((2 * i) + 1) hex_chars.[v land 0x0f]
-    done;
+    let rec fill i =
+      if i < len then (
+        let v = int_of_char (Bytes.get bytes i) land 0xff in
+        Bytes.set buf (2 * i) hex_chars.[v lsr 4];
+        Bytes.set buf ((2 * i) + 1) hex_chars.[v land 0x0f];
+        fill (i + 1)
+      )
+    in
+    fill 0;
     Bytes.unsafe_to_string buf
 end
 

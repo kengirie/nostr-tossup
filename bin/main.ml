@@ -21,12 +21,27 @@ let main env =
   in
   let subscription_id = Nostr_tossup.Config.subscription_id in
 
-  try
-    Nostr_tossup.Nostr_connection.connect_to_all_relays env config subscription_id None
-  with
-  | Failure msg ->
-    traceln "Failed to establish connections: %s" msg
-  | e ->
-    traceln "Unexpected error: %s" (Printexc.to_string e)
+  let clock = Eio.Stdenv.clock env in
+  let run_connections () =
+    Switch.run @@ fun sw ->
+    let enqueue_candidate =
+      Nostr_tossup.User_ingest.start
+        ~sw
+        ~clock
+        ~stdenv
+        ()
+    in
+    Nostr_tossup.Nostr_connection.connect_to_all_relays
+      ~on_kind1_kana:enqueue_candidate
+      env config subscription_id None
+  in
+
+  (try
+     run_connections ()
+   with
+   | Failure msg ->
+     traceln "Failed to establish connections: %s" msg
+   | e ->
+     traceln "Unexpected error: %s" (Printexc.to_string e))
 
 let () = Eio_main.run main

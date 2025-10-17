@@ -163,16 +163,20 @@ let decode_nsec str =
           List.iteri (fun idx value -> Bytes.set secret idx (Char.chr value)) bytes;
           Ok secret
 
-let encode_nsec secret =
-  let len = Bytes.length secret in
-  if len <> 32 then invalid_arg "encode_nsec expects 32-byte secret";
+let encode_bytes ~hrp bytes =
+  let len = Bytes.length bytes in
+  if len <> 32 then invalid_arg (Printf.sprintf "%s expects 32-byte input" hrp);
   let byte_list =
     let rec loop idx acc =
       if idx < 0 then acc
-      else loop (idx - 1) (Char.code (Bytes.get secret idx) :: acc)
+      else loop (idx - 1) (Char.code (Bytes.get bytes idx) :: acc)
     in
     loop (len - 1) []
   in
   match convertbits ~data:byte_list ~frombits:8 ~tobits:5 ~pad:true with
   | Error msg -> invalid_arg msg
-  | Ok data -> encode_bech32 ~hrp:"nsec" data
+  | Ok data -> encode_bech32 ~hrp data
+
+let encode_nsec secret = encode_bytes ~hrp:"nsec" secret
+
+let encode_npub public_key = encode_bytes ~hrp:"npub" public_key

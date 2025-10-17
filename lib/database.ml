@@ -54,20 +54,22 @@ type exec_outcome =
   [ `Applied
   | `Skipped_integrity_violation ]
 
-let exec_unit_statement conn sql : exec_outcome =
+let exec_unit_statement conn sql : (exec_outcome, Caqti_error.t) result =
   let (module Db : Caqti_eio.CONNECTION) = conn in
   let open Caqti_request.Infix in
   let request = (Caqti_type.unit ->. Caqti_type.unit) sql in
   match Db.exec request () with
-  | Ok () -> `Applied
-  | Error ((`Response_failed _ | `Request_failed _) as err) ->
-    (match Caqti_error.cause err with
-     | #Caqti_error.integrity_constraint_violation as cause ->
-       traceln "Skipping statement (%s): %s"
-         (Caqti_error.show_cause cause) sql;
-       `Skipped_integrity_violation
-     | _ -> raise (Caqti_error.Exn err))
-  | Error err -> raise (Caqti_error.Exn err)
+  | Ok () -> Ok `Applied
+  | Error err ->
+    (match err with
+     | (`Response_failed _ | `Request_failed _) as err' ->
+       (match Caqti_error.cause err' with
+        | #Caqti_error.integrity_constraint_violation as cause ->
+          traceln "Skipping statement (%s): %s"
+            (Caqti_error.show_cause cause) sql;
+          Ok `Skipped_integrity_violation
+        | _ -> Error err)
+     | _ -> Error err)
 
 let apply_sql_file ?uri ~sw ~stdenv path =
   let statements = Sql_file.statements_of_file path in
@@ -75,17 +77,21 @@ let apply_sql_file ?uri ~sw ~stdenv path =
   | [] -> traceln "No SQL statements found in %s" path
   | stmts ->
     with_connection ?uri ~sw ~stdenv @@ fun conn ->
-    let applied, skipped =
-      List.fold_left
-        (fun (applied, skipped) statement ->
-           match exec_unit_statement conn statement with
-           | `Applied -> (applied + 1, skipped)
-           | `Skipped_integrity_violation -> (applied, skipped + 1))
-        (0, 0)
-        stmts
+    let initial = Ok (0, 0) in
+    let combine acc statement =
+      match acc with
+      | Error _ as e -> e
+      | Ok (applied, skipped) ->
+        (match exec_unit_statement conn statement with
+         | Ok `Applied -> Ok (applied + 1, skipped)
+         | Ok `Skipped_integrity_violation -> Ok (applied, skipped + 1)
+         | Error _ as e -> e)
     in
-    traceln "Applied %d statements (skipped %d) from %s"
-      applied skipped path
+    (match List.fold_left combine initial stmts with
+     | Ok (applied, skipped) ->
+       traceln "Applied %d statements (skipped %d) from %s"
+         applied skipped path
+     | Error err -> raise (Caqti_error.Exn err))
 
 let ensure_schema ?uri ?(schema_path = "sql/schema.sql") ~sw ~stdenv () =
   apply_sql_file ?uri ~sw ~stdenv schema_path

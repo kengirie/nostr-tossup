@@ -6,6 +6,53 @@ type connection_state = {
   mutable last_eose: float;
 }
 
+let string_contains_kana s =
+  let len = String.length s in
+  let rec loop idx =
+    if idx + 2 >= len then false
+    else
+      let b0 = Char.code s.[idx] in
+      if b0 <> 0xE3 then
+        loop (idx + 1)
+      else
+        let b1 = Char.code s.[idx + 1] in
+        let b2 = Char.code s.[idx + 2] in
+        if ((b1 = 0x81) && b2 >= 0x80 && b2 <= 0xBF)
+           || ((b1 = 0x82) && b2 >= 0x80 && b2 <= 0xBF)
+           || ((b1 = 0x83) && b2 >= 0x80 && b2 <= 0xBF)
+        then true
+        else loop (idx + 1)
+  in
+  loop 0
+
+let extract_kind1_pubkey event_json =
+  match event_json with
+  | `Assoc fields ->
+    let find name = List.assoc_opt name fields in
+    let kind_opt =
+      match find "kind" with
+      | Some (`Int k) -> Some k
+      | Some (`Intlit s) -> (try Some (int_of_string s) with _ -> None)
+      | _ -> None
+    in
+    let pubkey_opt =
+      match find "pubkey" with
+      | Some (`String s) -> Some s
+      | _ -> None
+    in
+    let content_opt =
+      match find "content" with
+      | Some (`String s) -> Some s
+      | _ -> None
+    in
+    begin
+      match (kind_opt, pubkey_opt, content_opt) with
+      | Some 1, Some pubkey_hex, Some content when string_contains_kana content ->
+        Some (pubkey_hex, content)
+      | _ -> None
+    end
+  | _ -> None
+
 (* Create a Nostr REQ message to subscribe to events *)
 let create_request subscription_id =
   `List
@@ -14,7 +61,7 @@ let create_request subscription_id =
       `String subscription_id;
       `Assoc [
         ("kinds", `List [`Int 1]);
-        ("limit", `Int 1)
+        ("limit", `Int 5)
       ];
     ]
 
@@ -30,7 +77,7 @@ let create_keepalive_request keepalive_id =
     ]
 
 (* Receive and process WebSocket messages from the Nostr relay *)
-let rec recv_loop relay_name messages ws_descriptor state =
+let rec recv_loop relay_name messages ws_descriptor state on_kind1_kana =
   match Piaf.Stream.take messages with
   | Some (_opcode, iovec) ->
     (* Extract string data from WebSocket frame *)
@@ -39,6 +86,12 @@ let rec recv_loop relay_name messages ws_descriptor state =
        let json = Yojson.Safe.from_string received_string in
        match json with
        | `List [ `String "EVENT"; _sub_id; event_obj ] ->
+         (match on_kind1_kana with
+          | Some handler ->
+            (match extract_kind1_pubkey event_obj with
+             | Some (pubkey_hex, content) -> handler pubkey_hex content
+             | None -> ())
+          | None -> ());
          traceln "Received event from %s: %s" relay_name (Yojson.Safe.to_string event_obj)
        | `List [ `String "EOSE"; _sub_id ] ->
          state.last_eose <- Unix.gettimeofday ();
@@ -46,7 +99,7 @@ let rec recv_loop relay_name messages ws_descriptor state =
      with
      | Yojson.Json_error msg ->
        traceln "[%s] JSON parse error: %s" relay_name msg);
-    recv_loop relay_name messages ws_descriptor state
+    recv_loop relay_name messages ws_descriptor state on_kind1_kana
   | None ->
     traceln "[%s] Connection closed" relay_name;
     raise (Failure "Connection closed")
@@ -63,11 +116,10 @@ let send_initial_event relay_url ws_descriptor event =
        traceln "[%s] Failed to publish event: %s" relay_url (Printexc.to_string e))
 
 (* Establish a single WebSocket connection to a Nostr relay *)
-let connect_to_relay ~config ~sw env relay_url subscription_id event =
+let connect_to_relay ~config ~sw env relay_url subscription_id event on_kind1_kana =
   let uri = Uri.of_string relay_url in
   (* Create connection state *)
   let state = { last_eose = Unix.gettimeofday () } in
-
   match Piaf.Client.create ~config ~sw env uri with
   | Error e ->
     traceln "[%s] Error creating client: %a" relay_url Piaf.Error.pp_hum e;
@@ -121,7 +173,7 @@ let connect_to_relay ~config ~sw env relay_url subscription_id event =
              in
              keepalive_loop ())
            (fun () ->
-             recv_loop relay_url messages ws_descriptor state)
+             recv_loop relay_url messages ws_descriptor state on_kind1_kana)
        with
        | Failure msg ->
          traceln "[%s] connect_to_relay: Connection error: %s" relay_url msg;
@@ -131,13 +183,14 @@ let connect_to_relay ~config ~sw env relay_url subscription_id event =
          raise e)
 
 (* Connect to multiple relays concurrently using Eio fibers *)
-let connect_to_all_relays env config subscription_id event =
+let connect_to_all_relays ?on_kind1_kana env config subscription_id event =
+  let on_kind1_kana_opt = on_kind1_kana in
   let connect_to_single_relay relay_url =
     fun () ->
       let rec retry_loop attempt =
         try
           Switch.run (fun sw ->
-            connect_to_relay ~config ~sw env relay_url subscription_id event
+            connect_to_relay ~config ~sw env relay_url subscription_id event on_kind1_kana_opt
           )
         with
         | Failure msg ->
