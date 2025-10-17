@@ -6,25 +6,6 @@ type connection_state = {
   mutable last_eose: float;
 }
 
-let string_contains_kana s =
-  let len = String.length s in
-  let rec loop idx =
-    if idx + 2 >= len then false
-    else
-      let b0 = Char.code s.[idx] in
-      if b0 <> 0xE3 then
-        loop (idx + 1)
-      else
-        let b1 = Char.code s.[idx + 1] in
-        let b2 = Char.code s.[idx + 2] in
-        if ((b1 = 0x81) && b2 >= 0x80 && b2 <= 0xBF)
-           || ((b1 = 0x82) && b2 >= 0x80 && b2 <= 0xBF)
-           || ((b1 = 0x83) && b2 >= 0x80 && b2 <= 0xBF)
-        then true
-        else loop (idx + 1)
-  in
-  loop 0
-
 let extract_kind1_pubkey event_json =
   match event_json with
   | `Assoc fields ->
@@ -47,7 +28,7 @@ let extract_kind1_pubkey event_json =
     in
     begin
       match (kind_opt, pubkey_opt, content_opt) with
-      | Some 1, Some pubkey_hex, Some content when string_contains_kana content ->
+      | Some 1, Some pubkey_hex, Some content when Text_utils.contains_kana content ->
         Some (pubkey_hex, content)
       | _ -> None
     end

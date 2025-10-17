@@ -9,4 +9,3 @@ end
 
 let insert_if_missing (module Db : Caqti_eio.CONNECTION) ~npub ~registration_date ~existing_user =
   Db.exec Queries.insert_user (npub, registration_date, existing_user)
-  |> Caqti_eio.or_fail

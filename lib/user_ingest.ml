@@ -48,13 +48,14 @@ let start ~sw ~clock ~stdenv ?uri ?(interval = 60.) () =
       Database.with_connection ?uri ~sw ~stdenv @@ fun conn ->
       List.iter
         (fun npub ->
-          try
+          match
             User_repository.insert_if_missing conn
               ~npub
               ~registration_date
               ~existing_user:0
           with
-          | Caqti_error.Exn err ->
+          | Ok () -> ()
+          | Error err ->
             traceln "Failed to insert user %s: %a" npub Caqti_error.pp err)
         npubs
   in
