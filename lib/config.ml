@@ -1,12 +1,12 @@
 (* Nostr relay configuration *)
 let publish_relays = [
-  "https://relay.damus.io";
-  "https://nos.lol"
+   "https://nostr.mom";
+  "https://nostr.bitcoiner.social";
 ]
 
 let subscribe_relays = [
-  "https://nostr.mom";
-  "https://nostr.bitcoiner.social";
+  "https://relay.damus.io";
+  "https://nos.lol"
 ]
 
 let all_relays =

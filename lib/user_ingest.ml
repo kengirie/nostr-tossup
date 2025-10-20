@@ -58,14 +58,15 @@ let extract_kind1_kana event_json =
       | _ -> None
     in
     (match (kind_opt, pubkey_opt, content_opt) with
-     | Some 1, Some pubkey_hex, Some content when Text_utils.contains_kana content ->
-       Some (pubkey_hex, content)
+     | Some 1, Some pubkey_hex, Some content ->
+       if Text_utils.contains_kana content then Some (pubkey_hex, content) else None
      | _ -> None)
   | _ -> None
 
 let handle_kind1_event enqueue event_json =
   match extract_kind1_kana event_json with
-  | Some (pubkey_hex, content) -> enqueue pubkey_hex content
+  | Some (pubkey_hex, content) -> 
+    enqueue pubkey_hex content
   | None -> ()
 
 let start ~sw ~clock ~stdenv ?uri ?(interval = 60.) () =
@@ -85,9 +86,11 @@ let start ~sw ~clock ~stdenv ?uri ?(interval = 60.) () =
               ~registration_date
               ~existing_user:0
           with
-          | Ok () -> ()
+          | Ok () -> 
+            let short_npub = String.sub npub 0 (min 12 (String.length npub)) in
+            traceln "✅ Added user %s..." short_npub
           | Error err ->
-            traceln "Failed to insert user %s: %a" npub Caqti_error.pp err)
+            traceln "❌ Failed to insert user %s: %a" npub Caqti_error.pp err)
         npubs
   in
 
@@ -99,6 +102,8 @@ let start ~sw ~clock ~stdenv ?uri ?(interval = 60.) () =
           Hashtbl.reset pending;
           collected)
     in
+    if List.length batch > 0 then
+      traceln "🔄 Processing batch of %d new users with kana content" (List.length batch);
     (if batch <> [] then
        try
          process_batch batch

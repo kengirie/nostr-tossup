@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 - `bin/main.ml` is the entrypoint; it seeds SQLite from `sql/backup.sql` and launches relay connections.
-- `lib/` holds core modules (`nostr_connection.ml`, `bip340.ml`, `env.ml`, etc.); keep shared logic there.
+- `lib/` holds core modules (`nostr_subscribe.ml`, `bip340.ml`, `env.ml`, etc.); keep shared logic there.
 - `sql/schema.sql` and `sql/backup.sql` define database layout and bootstrap data; update both together when schema changes.
 - `test/test_nostr_tossup.ml` exercises signing, NIP-19 helpers, and `.env` loading; mirror its patterns when adding coverage.
 - `docs/` is for focused references (e.g., `bip340.md`); add design notes or protocol research here.
@@ -17,8 +17,8 @@
 
 ## Coding Style & Naming Conventions
 - Use two-space indentation and `let` bindings formatted by `ocamlformat`; run `dune fmt` before committing.
-- Modules are `UpperCamelCase` (e.g., `Nostr_connection`), functions and values use `snake_case`.
-- Keep side-effectful helpers in dedicated modules (e.g., networking in `nostr_connection.ml`) and expose pure helpers via `.mli` files when adding interfaces.
+- Modules are `UpperCamelCase` (e.g., `Nostr_subscribe`), functions and values use `snake_case`.
+- Keep side-effectful helpers in dedicated modules (e.g., networking in `nostr_subscribe.ml`) and expose pure helpers via `.mli` files when adding interfaces.
 - Prefer pattern matching over chained conditionals and add succinct OCaml comments `(* like this *)` for non-obvious flow.
 
 ## Testing Guidelines

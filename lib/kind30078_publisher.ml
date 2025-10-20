@@ -6,80 +6,40 @@ type t = {
   publish : publish_fn;
   mutable last_events : Nostr_event.signed_event list;
   mutex : Eio.Mutex.t;
-  blocked_relays : (string, unit) Hashtbl.t;
+  blocked_relays : Nostr_utils.RelayBlocklist.t;
 }
 
 let create_state ~publish =
   { publish;
     last_events = [];
     mutex = Eio.Mutex.create ();
-    blocked_relays = Hashtbl.create 4;
+    blocked_relays = Nostr_utils.RelayBlocklist.create ();
   }
 
-let normalize_url url =
-  let trimmed = String.trim url in
-  try
-    let uri = Uri.of_string trimmed in
-    let scheme = Option.map String.lowercase_ascii (Uri.scheme uri) in
-    let host = Option.map String.lowercase_ascii (Uri.host uri) in
-    let path =
-      match Uri.path uri with
-      | "" | "/" -> "/"
-      | other -> other
-    in
-    let normalized =
-      Uri.make
-        ?scheme
-        ?host
-        ?port:(Uri.port uri)
-        ~path
-        ~query:(Uri.query uri)
-        ()
-    in
-    Uri.to_string normalized
-  with
-  | _ -> trimmed
 
 let block_relay t relay reason =
-  Eio.Mutex.lock t.mutex;
-  let already_blocked = Hashtbl.mem t.blocked_relays relay in
-  if not already_blocked then Hashtbl.add t.blocked_relays relay ();
-  Eio.Mutex.unlock t.mutex;
-  if not already_blocked then
-    traceln "Relay %s blocked for contact publishing (%s)" relay reason
+  Nostr_utils.RelayBlocklist.block t.blocked_relays relay reason
 
 let unblock_relay t relay =
-  Eio.Mutex.lock t.mutex;
-  let was_blocked = Hashtbl.mem t.blocked_relays relay in
-  if was_blocked then Hashtbl.remove t.blocked_relays relay;
-  Eio.Mutex.unlock t.mutex;
-  if was_blocked then traceln "Relay %s unblocked for contact publishing" relay
+  Nostr_utils.RelayBlocklist.unblock t.blocked_relays relay
 
 let relay_blocked t relay_url =
-  let relay = normalize_url relay_url in
-  Eio.Mutex.lock t.mutex;
-  let blocked = Hashtbl.mem t.blocked_relays relay in
-  Eio.Mutex.unlock t.mutex;
-  blocked
+  Nostr_utils.RelayBlocklist.is_blocked t.blocked_relays relay_url
 
 let filter_allowed_relays t relays =
-  List.filter
-    (fun relay_url ->
-      let blocked = relay_blocked t relay_url in
-      if blocked then
-        traceln "Skipping publish to %s (blocked)" (normalize_url relay_url);
-      not blocked)
-    relays
+  Nostr_utils.RelayBlocklist.filter_allowed_relays t.blocked_relays relays
 
 let update_blocklist t results =
-  List.iter
-    (fun { Nostr_publish.relay; outcome } ->
-      match outcome with
-      | Nostr_publish.Ack _ -> unblock_relay t relay
-      | Nostr_publish.Rejected reason
-      | Nostr_publish.Failed reason -> block_relay t relay reason
-      | Nostr_publish.Timeout -> ())
-    results
+  let utils_results = List.map (fun {Nostr_publish.relay; outcome} ->
+    let utils_outcome = match outcome with
+      | Nostr_publish.Ack reason -> Nostr_utils.PublishResult.Ack reason
+      | Nostr_publish.Rejected reason -> Nostr_utils.PublishResult.Rejected reason
+      | Nostr_publish.Failed reason -> Nostr_utils.PublishResult.Failed reason
+      | Nostr_publish.Timeout -> Nostr_utils.PublishResult.Timeout
+    in
+    {Nostr_utils.PublishResult.relay; outcome = utils_outcome}
+  ) results in
+  Nostr_utils.PublishResult.update_blocklist t.blocked_relays utils_results
 
 let store_events t events =
   Eio.Mutex.lock t.mutex;
@@ -88,7 +48,7 @@ let store_events t events =
 
 let replay_events_to_relay t relay_url =
   if relay_blocked t relay_url then
-    traceln "Skipping replay of stored events to %s (blocked)" (normalize_url relay_url)
+    traceln "Skipping replay of stored events to %s (blocked)" (Nostr_utils.normalize_url relay_url)
   else (
     Eio.Mutex.lock t.mutex;
     let events = t.last_events in
@@ -113,10 +73,7 @@ let replay_events_to_relay t relay_url =
         update_blocklist t results)
       events)
 
-let npub_to_hex npub =
-  match Nip19.decode_npub npub with
-  | Ok bytes -> Ok (Nostr_event.Hex.bytes_to_hex bytes)
-  | Error msg -> Error msg
+let npub_to_hex = Nostr_utils.npub_to_hex
 
 let build_tags npubs =
   let rec gather acc skipped = function
@@ -132,18 +89,16 @@ let build_tags npubs =
   (base_tags @ contact_tags, skipped)
 
 let log_publish_results label results =
-  List.iter
-    (fun { Nostr_publish.relay; outcome } ->
-      match outcome with
-      | Nostr_publish.Ack reason ->
-        traceln "Relay %s acknowledged %s (%s)" relay label reason
-      | Nostr_publish.Rejected reason ->
-        traceln "Relay %s rejected %s: %s" relay label reason
-      | Nostr_publish.Failed reason ->
-        traceln "Failed to publish %s to %s: %s" label relay reason
-      | Nostr_publish.Timeout ->
-        traceln "Timed out publishing %s to %s" label relay)
-    results
+  let utils_results = List.map (fun {Nostr_publish.relay; outcome} ->
+    let utils_outcome = match outcome with
+      | Nostr_publish.Ack reason -> Nostr_utils.PublishResult.Ack reason
+      | Nostr_publish.Rejected reason -> Nostr_utils.PublishResult.Rejected reason
+      | Nostr_publish.Failed reason -> Nostr_utils.PublishResult.Failed reason
+      | Nostr_publish.Timeout -> Nostr_utils.PublishResult.Timeout
+    in
+    {Nostr_utils.PublishResult.relay; outcome = utils_outcome}
+  ) results in
+  Nostr_utils.PublishResult.log_results label utils_results
 
 let publish_once t ~sw ~stdenv ~keypair ?uri () =
   Database.with_connection ?uri ~sw ~stdenv @@ fun conn ->

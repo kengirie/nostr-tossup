@@ -68,3 +68,7 @@ _doc/
 
 # Utop
 .utoprc*
+
+*.sqlite3
+data.sqlite3
+*.db

@@ -38,29 +38,7 @@ let create ?(default_timeout = 5.0) () =
     last_notice = None;
   }
 
-let normalize_url url =
-  let trimmed = String.trim url in
-  try
-    let uri = Uri.of_string trimmed in
-    let scheme = Option.map String.lowercase_ascii (Uri.scheme uri) in
-    let host = Option.map String.lowercase_ascii (Uri.host uri) in
-    let path =
-      match Uri.path uri with
-      | "" | "/" -> "/"
-      | other -> other
-    in
-    let normalized =
-      Uri.make
-        ?scheme
-        ?host
-        ?port:(Uri.port uri)
-        ~path
-        ~query:(Uri.query uri)
-        ()
-    in
-    Uri.to_string normalized
-  with
-  | _ -> trimmed
+let normalize_url = Nostr_utils.normalize_url
 
 let ensure_relay_entry t relay_url =
   match Hashtbl.find_opt t.relays relay_url with
@@ -171,13 +149,6 @@ let publish_to_relay t ~clock ~timeout (event : Nostr_event.signed_event) relay_
      Eio.Mutex.unlock t.mutex;
      let send_result =
        try
-         (* Debug: Log the actual message being sent *)
-         let hex_dump = String.to_seq event.message 
-           |> Seq.map (fun c -> Printf.sprintf "%02x" (Char.code c))
-           |> List.of_seq |> String.concat " " in
-         Printf.eprintf "[DEBUG %s] Sending message (%d bytes)\n" relay (String.length event.message);
-         Printf.eprintf "[DEBUG %s] Text: %s\n" relay event.message;
-         Printf.eprintf "[DEBUG %s] Hex: %s\n%!" relay hex_dump;
          send event.message;
          None
        with
@@ -202,11 +173,7 @@ let publish t ~clock ?timeout ~relays (event : Nostr_event.signed_event) =
     |> List.map normalize_url
     |> List.sort_uniq String.compare
   in
-  List.mapi (fun i relay_url ->
-    if i > 0 then (
-      (* Stagger sending by 100ms for each additional relay *)
-      Eio.Time.sleep clock (0.1 *. float_of_int i)
-    );
+  List.map (fun relay_url ->
     (* Create independent message copy for each relay to avoid stream corruption *)
     let event_copy = { 
       Nostr_event.json = event.json; 

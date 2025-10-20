@@ -10,10 +10,8 @@ let main env =
            ~stdenv
            "sql/backup.sql")
    with
-   | Caqti_error.Exn err ->
-     traceln "Failed to prepare database: %a" Caqti_error.pp err
-   | exn ->
-     traceln "Failed to prepare database: %s" (Printexc.to_string exn));
+   | Caqti_error.Exn _ -> ()
+   | _ -> ());
 
   let config =
     let open Piaf.Config in
@@ -22,8 +20,7 @@ let main env =
   let keypair =
     match Nostr_tossup.Env.load_nsec_secret () with
     | Ok secret -> Nostr_tossup.Bip340.load_secret secret
-    | Error msg ->
-      traceln "Failed to load NOSTR_NSEC: %s" msg;
+    | Error _ ->
       failwith "Missing NOSTR_NSEC secret"
   in
   let clock = Eio.Stdenv.clock env in
@@ -51,6 +48,7 @@ let main env =
         let kind1_filter =
           Nostr_tossup.Nostr_subscribe.Filter.(to_yojson (create ~kinds:[1] ~limit:5 ()))
         in
+        (* Set up subscription first *)
         let _kind1_subscription =
           Nostr_tossup.Nostr_subscribe.subscribe_simple
             subscriber
@@ -60,9 +58,10 @@ let main env =
               Nostr_tossup.User_ingest.handle_kind1_event enqueue_candidate event)
             ()
         in
-        Nostr_tossup.Nostr_connection.connect_to_all_relays
+        (* Then connect to relays *)
+        Nostr_tossup.Nostr_subscribe.connect_to_relays
+          subscriber
           ~publisher
-          ~subscriber
           ~on_relay_connected:(Nostr_tossup.Kind30078_publisher.on_relay_connected contacts_publisher)
           env config None)
   in
@@ -70,9 +69,7 @@ let main env =
   (try
      run_connections ()
    with
-   | Failure msg ->
-     traceln "Failed to establish connections: %s" msg
-   | e ->
-     traceln "Unexpected error: %s" (Printexc.to_string e))
+   | Failure _ -> ()
+   | _ -> ())
 
 let () = Eio_main.run main
