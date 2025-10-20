@@ -37,6 +37,37 @@ let with_lock mutex f =
   Eio.Mutex.lock mutex;
   Fun.protect ~finally:(fun () -> Eio.Mutex.unlock mutex) f
 
+let extract_kind1_kana event_json =
+  match event_json with
+  | `Assoc fields ->
+    let find name = List.assoc_opt name fields in
+    let kind_opt =
+      match find "kind" with
+      | Some (`Int k) -> Some k
+      | Some (`Intlit s) -> (try Some (int_of_string s) with _ -> None)
+      | _ -> None
+    in
+    let pubkey_opt =
+      match find "pubkey" with
+      | Some (`String s) -> Some s
+      | _ -> None
+    in
+    let content_opt =
+      match find "content" with
+      | Some (`String s) -> Some s
+      | _ -> None
+    in
+    (match (kind_opt, pubkey_opt, content_opt) with
+     | Some 1, Some pubkey_hex, Some content when Text_utils.contains_kana content ->
+       Some (pubkey_hex, content)
+     | _ -> None)
+  | _ -> None
+
+let handle_kind1_event enqueue event_json =
+  match extract_kind1_kana event_json with
+  | Some (pubkey_hex, content) -> enqueue pubkey_hex content
+  | None -> ()
+
 let start ~sw ~clock ~stdenv ?uri ?(interval = 60.) () =
   let pending = Hashtbl.create 128 in
   let mutex = Eio.Mutex.create () in

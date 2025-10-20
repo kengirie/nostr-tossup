@@ -1,8 +1,16 @@
 (* Nostr relay configuration *)
-let nostr_relays = [
+let publish_relays = [
   "https://relay.damus.io";
-  "https://nos.lol";
+  "https://nos.lol"
 ]
+
+let subscribe_relays = [
+  "https://nostr.mom";
+  "https://nostr.bitcoiner.social";
+]
+
+let all_relays =
+  List.sort_uniq String.compare (publish_relays @ subscribe_relays)
 
 (* Reconnection settings *)
 let reconnect_delay = 20.0
@@ -10,6 +18,3 @@ let reconnect_delay = 20.0
 (* Keep-alive settings *)
 let keepalive_interval = 30.0  (* Send keepalive REQ every 30 seconds *)
 let eose_timeout = 10.0        (* Wait 10 seconds for EOSE response *)
-
-(* Subscription settings *)
-let subscription_id = "my_sub"

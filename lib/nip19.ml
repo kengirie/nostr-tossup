@@ -145,23 +145,27 @@ let encode_bech32 ~hrp data =
     data_with_checksum;
   Buffer.contents buffer
 
-let decode_nsec str =
+let decode_to_32_bytes ~expected_hrp str =
   match decode_bech32 str with
   | Error _ as e -> e
   | Ok (hrp, payload) ->
-    if hrp <> "nsec" then
-      Error "NIP-19: HRP is not nsec"
+    if hrp <> expected_hrp then
+      Error (Printf.sprintf "NIP-19: HRP is not %s" expected_hrp)
     else
       match convertbits ~data:payload ~frombits:5 ~tobits:8 ~pad:false with
       | Error _ as e -> e
       | Ok bytes ->
         let len = List.length bytes in
         if len <> 32 then
-          Error "NIP-19: invalid secret key length"
+          Error (Printf.sprintf "NIP-19: invalid %s length" expected_hrp)
         else
           let secret = Bytes.create len in
           List.iteri (fun idx value -> Bytes.set secret idx (Char.chr value)) bytes;
           Ok secret
+
+let decode_nsec str = decode_to_32_bytes ~expected_hrp:"nsec" str
+
+let decode_npub str = decode_to_32_bytes ~expected_hrp:"npub" str
 
 let encode_bytes ~hrp bytes =
   let len = Bytes.length bytes in

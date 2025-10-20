@@ -54,14 +54,14 @@ let finalize_event_json ~pubkey_hex ~created_at ~kind ~tags ~content ~event_id ~
       ("sig", `String signature_hex)
     ]
 
-let kind1_event_message ~content ~tags ~keypair =
+let signed_event_message ~kind ~content ~tags ~keypair =
   let created_at = int_of_float (Unix.gettimeofday ()) in
   let pubkey_bytes = Bip340.public_key keypair in
   let pubkey_hex = Hex.bytes_to_hex pubkey_bytes in
-  let serialized = serialize_event ~pubkey_hex ~created_at ~kind:1 ~tags ~content in
+  let serialized = serialize_event ~pubkey_hex ~created_at ~kind ~tags ~content in
   let _, hash_bin = compute_event_hash serialized in
   if String.length hash_bin <> 32 then
-    invalid_arg "kind1_event_message: expected 32-byte hash";
+    invalid_arg "signed_event_message: expected 32-byte hash";
   let event_id = Hex.bytes_to_hex (Bytes.of_string hash_bin) in
   let signature_bytes = Bip340.sign_prehashed ~keypair hash_bin in
   let signature_hex = Hex.bytes_to_hex signature_bytes in
@@ -69,7 +69,7 @@ let kind1_event_message ~content ~tags ~keypair =
     finalize_event_json
       ~pubkey_hex
       ~created_at
-      ~kind:1
+      ~kind
       ~tags
       ~content
       ~event_id
@@ -79,3 +79,6 @@ let kind1_event_message ~content ~tags ~keypair =
     `List [ `String "EVENT"; event_json ] |> Yojson.Safe.to_string
   in
   { json = event_json; message = event_message; id = event_id }
+
+let kind1_event_message ~content ~tags ~keypair =
+  signed_event_message ~kind:1 ~content ~tags ~keypair

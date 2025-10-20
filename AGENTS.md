@@ -9,6 +9,7 @@
 
 ## Build, Test, and Development Commands
 - `opam install . --deps-only` installs OCaml dependencies for a fresh checkout.
+- Before running build/test commands, enter the project OPAM switch: `eval $(opam env)`.
 - `dune build` compiles the library, binary, and SQL helpers; run before opening a PR.
 - `dune exec bin/main.exe` runs the relay client using the current `.env` and `data.sqlite3`.
 - `dune test` (alias of `dune runtest`) runs the current unit suite; use `--watch` while iterating.
