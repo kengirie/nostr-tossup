@@ -3,6 +3,8 @@ let publish_relays = [
    "https://nostr.mom";
   "https://nostr.bitcoiner.social";
   "https://nos.lol";
+  (*"https://relay.primal.net/";
+  "https://relay.damus.io"; *)
 ]
 
 let subscribe_relays = [

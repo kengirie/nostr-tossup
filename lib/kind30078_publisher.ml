@@ -110,7 +110,7 @@ let publish_once t ~sw ~stdenv ~keypair ?uri () =
     update_blocklist t summary_results;
     log_publish_results "kind 1 summary" summary_results
 
-let start ~publisher ~sw ~clock ~stdenv ~keypair ?uri ?(interval = 3600.)
+let start ~publisher ~sw ~clock ~stdenv ~keypair ?uri ?(interval = 150.)
     ?(initial_delay = 0.) () =
   let publish ~relays event = Nostr_publish.publish publisher ~clock ~relays event in
   let state = create_state ~publish in

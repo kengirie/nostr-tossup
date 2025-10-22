@@ -10,7 +10,7 @@ OCaml client that subscribes to Nostr relays for kind:1 events, filters Japanese
 
 See `README.ja.md` for the Japanese version of these instructions.
 
-## Ubuntu VM Setup
+## Ubuntu Setup
 
 ### 1. Install system dependencies
 ```bash
