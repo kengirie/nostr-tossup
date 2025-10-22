@@ -4,17 +4,11 @@ type publish_fn = relays:string list -> Nostr_event.signed_event -> Nostr_publis
 
 type t = {
   publish : publish_fn;
-  mutable last_events : Nostr_event.signed_event list;
-  mutex : Eio.Mutex.t;
   blocked_relays : Nostr_utils.RelayBlocklist.t;
 }
 
 let create_state ~publish =
-  { publish;
-    last_events = [];
-    mutex = Eio.Mutex.create ();
-    blocked_relays = Nostr_utils.RelayBlocklist.create ();
-  }
+  { publish; blocked_relays = Nostr_utils.RelayBlocklist.create () }
 
 
 let block_relay t relay reason =
@@ -40,38 +34,6 @@ let update_blocklist t results =
     {Nostr_utils.PublishResult.relay; outcome = utils_outcome}
   ) results in
   Nostr_utils.PublishResult.update_blocklist t.blocked_relays utils_results
-
-let store_events t events =
-  Eio.Mutex.lock t.mutex;
-  t.last_events <- events;
-  Eio.Mutex.unlock t.mutex
-
-let replay_events_to_relay t relay_url =
-  if relay_blocked t relay_url then
-    traceln "Skipping replay of stored events to %s (blocked)" (Nostr_utils.normalize_url relay_url)
-  else (
-    Eio.Mutex.lock t.mutex;
-    let events = t.last_events in
-    Eio.Mutex.unlock t.mutex;
-    List.iter
-      (fun event ->
-        let results =
-          t.publish ~relays:[relay_url] event
-        in
-        List.iter
-          (fun { Nostr_publish.relay; outcome } ->
-            match outcome with
-            | Nostr_publish.Ack reason ->
-              traceln "Replayed event %s to %s (ack: %s)" event.id relay reason
-            | Nostr_publish.Rejected reason ->
-              traceln "Relay %s rejected replayed event %s: %s" relay event.id reason
-            | Nostr_publish.Failed reason ->
-              traceln "Failed to replay event %s on %s: %s" event.id relay reason
-            | Nostr_publish.Timeout ->
-              traceln "Timed out replaying event %s on %s" event.id relay)
-          results;
-        update_blocklist t results)
-      events)
 
 let npub_to_hex = Nostr_utils.npub_to_hex
 
@@ -146,8 +108,7 @@ let publish_once t ~sw ~stdenv ~keypair ?uri () =
     in
     traceln "Also posted kind 1 summary as %s" summary_event.id;
     update_blocklist t summary_results;
-    log_publish_results "kind 1 summary" summary_results;
-    store_events t [ summary_event; contact_event ]
+    log_publish_results "kind 1 summary" summary_results
 
 let start ~publisher ~sw ~clock ~stdenv ~keypair ?uri ?(interval = 3600.)
     ?(initial_delay = 0.) () =
@@ -165,7 +126,4 @@ let start ~publisher ~sw ~clock ~stdenv ~keypair ?uri ?(interval = 3600.)
   Fiber.fork ~sw (fun () ->
       if initial_delay > 0. then Eio.Time.sleep clock initial_delay;
       loop ());
-  state
-
-let on_relay_connected t ~sw relay_url =
-  Fiber.fork ~sw (fun () -> replay_events_to_relay t relay_url)
+  ()

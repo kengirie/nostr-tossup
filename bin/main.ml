@@ -5,10 +5,8 @@ let main env =
   let stdenv = (env :> Caqti_eio.stdenv) in
   (try
      Switch.run (fun sw ->
-         Nostr_tossup.Database.apply_sql_file
-           ~sw
-           ~stdenv
-           "sql/backup.sql")
+         Nostr_tossup.Database.ensure_schema ~sw ~stdenv ();
+         Nostr_tossup.Database.apply_seeds_if_empty ~sw ~stdenv ())
    with
    | Caqti_error.Exn _ -> ()
    | _ -> ());
@@ -28,16 +26,14 @@ let main env =
   let subscriber = Nostr_tossup.Nostr_subscribe.create () in
   let run_connections () =
     Switch.run (fun sw ->
-        let contacts_publisher =
-          Nostr_tossup.Kind30078_publisher.start
-            ~initial_delay:20.
-            ~publisher
-            ~sw
-            ~clock
-            ~stdenv
-            ~keypair
-            ()
-        in
+        Nostr_tossup.Kind30078_publisher.start
+          ~initial_delay:20.
+          ~publisher
+          ~sw
+          ~clock
+          ~stdenv
+          ~keypair
+          ();
         let enqueue_candidate =
           Nostr_tossup.User_ingest.start
             ~sw
@@ -62,7 +58,6 @@ let main env =
         Nostr_tossup.Nostr_subscribe.connect_to_relays
           subscriber
           ~publisher
-          ~on_relay_connected:(Nostr_tossup.Kind30078_publisher.on_relay_connected contacts_publisher)
           env config None)
   in
 

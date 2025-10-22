@@ -95,3 +95,21 @@ let apply_sql_file ?uri ~sw ~stdenv path =
 
 let ensure_schema ?uri ?(schema_path = "sql/schema.sql") ~sw ~stdenv () =
   apply_sql_file ?uri ~sw ~stdenv schema_path
+
+let is_database_empty ?uri ~sw ~stdenv () =
+  with_connection ?uri ~sw ~stdenv @@ fun conn ->
+  let (module Db : Caqti_eio.CONNECTION) = conn in
+  let open Caqti_request.Infix in
+  let request = (Caqti_type.unit ->! Caqti_type.int) 
+    "SELECT COUNT(*) FROM users" in
+  match Db.find request () with
+  | Ok count -> count = 0
+  | Error _ -> true
+
+let apply_seeds_if_empty ?uri ?(seeds_path = "sql/seeds.sql") ~sw ~stdenv () =
+  if is_database_empty ?uri ~sw ~stdenv () then (
+    traceln "Database is empty, applying initial seed data...";
+    apply_sql_file ?uri ~sw ~stdenv seeds_path
+  ) else (
+    traceln "Database contains data, skipping seed application"
+  )

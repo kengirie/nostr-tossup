@@ -2,11 +2,13 @@
 let publish_relays = [
    "https://nostr.mom";
   "https://nostr.bitcoiner.social";
+  "https://nos.lol";
 ]
 
 let subscribe_relays = [
   "https://relay.damus.io";
-  "https://nos.lol"
+  "https://nos.lol";
+  "https://r.kojira.io";
 ]
 
 let all_relays =
