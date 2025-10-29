@@ -37,6 +37,7 @@ eval $(opam env)
 
 # プロジェクト専用スイッチを作成 (OCaml 5.3.0)
 opam switch create . 5.3.0
+
 eval $(opam env)
 
 # 依存関係インストール
@@ -45,6 +46,8 @@ opam install . --deps-only -y
 # ビルド
 dune build
 ```
+
+> `Package nostr-tossup does not exist, create as a NEW package? [Y/n]` と表示された場合は `Y`（Enter）でローカルパッケージとして登録してください。
 
 ### 3. 自動バックアップの設定
 ```bash

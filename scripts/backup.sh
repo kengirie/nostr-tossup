@@ -1,8 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
 # Nostr Tossup Database Backup Script
-BACKUP_DIR="/app/backups"
-DB_PATH="/app/data/data.sqlite3"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+BACKUP_DIR="$PROJECT_DIR/backups"
+DB_PATH="$PROJECT_DIR/data/data.sqlite3"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 BACKUP_FILE="$BACKUP_DIR/backup_$TIMESTAMP.db"
 

@@ -45,6 +45,8 @@ opam install . --deps-only -y
 dune build
 ```
 
+> If opam prints `Package nostr-tossup does not exist, create as a NEW package? [Y/n]`, answer `Y` (or press Enter) to register the local package.
+
 ### 3. Configure automated backups
 ```bash
 chmod +x scripts/*.sh
