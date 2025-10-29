@@ -53,51 +53,53 @@ chmod +x scripts/*.sh
 ./scripts/setup-cron.sh  # hourly backups, 7-day retention
 ```
 
-### 4. Set environment variables
+### 4. Create the `.env` secret file
 ```bash
-export NOSTR_NSEC="nsec1your_secret_key_here"
-echo 'export NOSTR_NSEC="nsec1your_secret_key_here"' >> ~/.bashrc  # optional persistence
+cat <<'EOF' > .env
+NOSTR_NSEC=nsec1your_secret_key_here
+EOF
 ```
+
+The app loads `.env` automatically at startup. Adjust the value above to your own NIP-19 secret.
 
 ### 5. Run the application
 ```bash
-./_build/default/bin/main.exe                        # foreground
+./_build/default/bin/main.exe                         # foreground
 nohup ./_build/default/bin/main.exe > app.log 2>&1 &  # background
 ```
 
+> On some distributions (e.g., minimal Azure images) you may need to preload `libsecp256k1`:
+> ```bash
+> LD_PRELOAD=/lib/x86_64-linux-gnu/libsecp256k1.so dune exec bin/main.exe
+> ```
+
 ## Production Notes
 
-### systemd service example
+### screen session example
 ```bash
-sudo tee /etc/systemd/system/nostr-tossup.service <<'EOF'
-[Unit]
-Description=Nostr Tossup Service
-After=network.target
+# Create or reattach to a screen session named "nostr"
+screen -S nostr
 
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/nostr-tossup
-Environment=NOSTR_NSEC=nsec1your_secret_key_here
-ExecStart=/home/ubuntu/nostr-tossup/_build/default/bin/main.exe
-Restart=always
-RestartSec=10
+# Inside screen, start the app (loads .env by default)
+dune exec bin/main.exe
 
-[Install]
-WantedBy=multi-user.target
-EOF
+# Detach without stopping the app
+# (press Ctrl+a, then d)
 
-sudo systemctl enable nostr-tossup
-sudo systemctl start nostr-tossup
-sudo journalctl -u nostr-tossup -f
+# Reattach later
+screen -r nostr
+
+# To stop the app, reattach and press Ctrl+C inside screen
 ```
 
 ### Updating
 ```bash
 cd nostr-tossup
+screen -r nostr   # reattach if already running
+# Stop the running process inside screen (Ctrl+C)
 git pull origin main
 dune build
-sudo systemctl restart nostr-tossup
+dune exec bin/main.exe  # restart inside screen
 ```
 
 ## Features

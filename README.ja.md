@@ -58,14 +58,14 @@ chmod +x scripts/*.sh
 ./scripts/setup-cron.sh
 ```
 
-### 4. 環境変数設定
+### 4. `.env` に秘密鍵を保存
 ```bash
-# NOSTR_NSEC秘密鍵を環境変数に設定
-export NOSTR_NSEC="nsec1your_secret_key_here"
-
-# 永続化する場合は ~/.bashrc に追加
-echo 'export NOSTR_NSEC="nsec1your_secret_key_here"' >> ~/.bashrc
+cat <<'EOF' > .env
+NOSTR_NSEC=nsec1your_secret_key_here
+EOF
 ```
+
+起動時に `.env` を自動読み込みするため、上記の値を自分の NIP-19 秘密鍵に書き換えてください。
 
 ### 5. 実行
 ```bash
@@ -76,43 +76,38 @@ echo 'export NOSTR_NSEC="nsec1your_secret_key_here"' >> ~/.bashrc
 nohup ./_build/default/bin/main.exe > app.log 2>&1 &
 ```
 
+> Azure などの最小構成ディストリビューションでは、以下のように `libsecp256k1` を事前にロードする必要がある場合があります。
+> ```bash
+> LD_PRELOAD=/lib/x86_64-linux-gnu/libsecp256k1.so dune exec bin/main.exe
+> ```
+
 ## 本番運用
 
-### プロセス管理（systemd推奨）
+### プロセス管理（screen活用例）
 ```bash
-# systemdサービス作成例
-sudo tee /etc/systemd/system/nostr-tossup.service << EOF
-[Unit]
-Description=Nostr Tossup Service
-After=network.target
+# nostr という screen セッションを作成（既にあれば再接続）
+screen -S nostr
 
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/nostr-tossup
-Environment=NOSTR_NSEC=nsec1your_secret_key_here
-ExecStart=/home/ubuntu/nostr-tossup/_build/default/bin/main.exe
-Restart=always
-RestartSec=10
+# screen セッション内でアプリを起動（.env を自動読み込み）
+dune exec bin/main.exe
 
-[Install]
-WantedBy=multi-user.target
-EOF
+# アプリを止めずにセッションを離れる
+# Ctrl+a → d
 
-# サービス有効化・開始
-sudo systemctl enable nostr-tossup
-sudo systemctl start nostr-tossup
+# 後で戻るとき
+screen -r nostr
 
-# ログ確認
-sudo journalctl -u nostr-tossup -f
+# 停止したい場合は再接続して Ctrl+C
 ```
 
 ### アップデート手順
 ```bash
 cd nostr-tossup
+screen -r nostr   # 起動中ならセッションへ戻る
+# セッション内でアプリを Ctrl+C で停止
 git pull origin main
 dune build
-sudo systemctl restart nostr-tossup
+dune exec bin/main.exe  # screen 内で再起動
 ```
 
 ## 機能
