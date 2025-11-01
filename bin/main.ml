@@ -54,6 +54,12 @@ let main env =
               Nostr_tossup.User_ingest.handle_kind1_event enqueue_candidate event)
             ()
         in
+        Nostr_tossup.Bot_checker.start
+          ~sw
+          ~clock
+          ~stdenv
+          ~subscriber
+          ();
         (* Then connect to relays *)
         Nostr_tossup.Nostr_subscribe.connect_to_relays
           subscriber
