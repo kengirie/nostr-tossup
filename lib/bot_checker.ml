@@ -17,7 +17,7 @@ let content_indicates_bot event =
   match Yojson.Safe.Util.member "content" event with
   | `String content ->
     let lower = String.lowercase_ascii content in
-    contains_substring "bot" lower || contains_substring "rss" lower
+    contains_substring "bot" lower || contains_substring "rss" lower || contains_substring "ボット" content
   | _ -> false
 
 let tag_string_indicates_bot s =

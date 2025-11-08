@@ -41,7 +41,7 @@ let decode_utf8_code str idx =
 
 let is_kana code =
   (code >= 0x3040 && code <= 0x309F)
-  || (code >= 0x30A0 && code <= 0x30FF)
+  || (code >= 0x30A0 && code <= 0x30FF && code <> 0x30C4 && code <> 0x30CE)
 
 let contains_kana str =
   let rec loop idx =
