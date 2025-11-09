@@ -98,10 +98,15 @@ let fetch_kind0_event ~clock ~subscriber ~relays ~timeout pubkey_hex =
     | _ -> None
 
 let classify_npub ~sw ~stdenv ~subscriber ~clock ~relays ?uri npub_hex npub =
-  match fetch_kind0_event ~clock ~subscriber ~relays ~timeout:20. npub_hex with
+  match fetch_kind0_event ~clock ~subscriber ~relays ~timeout:30. npub_hex with
   | None ->
-    traceln "No kind0 event found for %s" npub;
-    Ok ()
+    traceln "No kind0 event found for %s, marking as existing_user=1" npub;
+    Database.with_connection ?uri ~sw ~stdenv @@ fun conn ->
+    (match User_repository.update_existing_user conn ~npub ~existing_user:1 with
+     | Ok () ->
+       traceln "Updated %s existing_user=1" npub;
+       Ok ()
+     | Error err -> Error err)
   | Some event ->
     let is_bot = if event_indicates_bot event then 1 else 0 in
     Database.with_connection ?uri ~sw ~stdenv @@ fun conn ->
@@ -110,6 +115,7 @@ let classify_npub ~sw ~stdenv ~subscriber ~clock ~relays ?uri npub_hex npub =
       traceln "Updated %s is_bot=%d" npub is_bot;
       Ok ()
     | Error err -> Error err
+
 
 let start ~sw ~clock ~stdenv ~subscriber ?uri ?(relays = Config.subscribe_relays) ?(interval = 300.) () =
   let rec loop () =

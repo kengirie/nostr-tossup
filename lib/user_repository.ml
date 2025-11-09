@@ -17,6 +17,14 @@ module Queries = struct
   let update_is_bot =
     (t2 int string ->. unit)
       "UPDATE users\n       SET is_bot = ?\n       WHERE pubkey = ?"
+
+  let update_existing_user =
+    (t2 int string ->. unit)
+      "UPDATE users\n       SET existing_user = ?\n       WHERE pubkey = ?"
+
+  let next_new_user =
+    (unit ->? string)
+      "SELECT pubkey\n       FROM users\n       WHERE existing_user = 0\n       ORDER BY RANDOM()\n       LIMIT 1"
 end
 
 let insert_if_missing (module Db : Caqti_eio.CONNECTION) ~npub ~registration_date ~existing_user =
@@ -30,3 +38,9 @@ let next_unclassified_user (module Db : Caqti_eio.CONNECTION) =
 
 let update_is_bot (module Db : Caqti_eio.CONNECTION) ~npub ~is_bot =
   Db.exec Queries.update_is_bot (is_bot, npub)
+
+let update_existing_user (module Db : Caqti_eio.CONNECTION) ~npub ~existing_user =
+  Db.exec Queries.update_existing_user (existing_user, npub)
+
+let next_new_user (module Db : Caqti_eio.CONNECTION) =
+  Db.find_opt Queries.next_new_user ()

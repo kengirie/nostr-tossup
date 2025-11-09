@@ -31,7 +31,7 @@ type t = {
   mutable last_notice : (string * string) option;
 }
 
-let create ?(default_timeout = 5.0) () =
+let create ?(default_timeout = 10.0) () =
   { relays = Hashtbl.create 8;
     mutex = Eio.Mutex.create ();
     default_timeout;
@@ -175,10 +175,10 @@ let publish t ~clock ?timeout ~relays (event : Nostr_event.signed_event) =
   in
   List.map (fun relay_url ->
     (* Create independent message copy for each relay to avoid stream corruption *)
-    let event_copy = { 
-      Nostr_event.json = event.json; 
-      message = Bytes.to_string (Bytes.of_string event.message); 
-      id = event.id 
+    let event_copy = {
+      Nostr_event.json = event.json;
+      message = Bytes.to_string (Bytes.of_string event.message);
+      id = event.id
     } in
     publish_to_relay t ~clock ~timeout event_copy relay_url
   ) deduped

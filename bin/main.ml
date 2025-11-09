@@ -60,6 +60,12 @@ let main env =
           ~stdenv
           ~subscriber
           ();
+        Nostr_tossup.User_classifier.start
+          ~sw
+          ~clock
+          ~stdenv
+          ~subscriber
+          ();
         (* Then connect to relays *)
         Nostr_tossup.Nostr_subscribe.connect_to_relays
           subscriber
