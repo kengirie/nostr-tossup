@@ -11,6 +11,7 @@ let subscribe_relays = [
   "https://relay.damus.io";
   "https://nos.lol";
   "https://r.kojira.io";
+  "https://relay.nostr.band";
 ]
 
 let all_relays =

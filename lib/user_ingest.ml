@@ -57,9 +57,28 @@ let extract_kind1_kana event_json =
       | Some (`String s) -> Some s
       | _ -> None
     in
-    (match (kind_opt, pubkey_opt, content_opt) with
-     | Some 1, Some pubkey_hex, Some content ->
-       if Text_utils.contains_kana content then Some (pubkey_hex, content) else None
+    let tags_opt = find "tags" in
+    (match (kind_opt, pubkey_opt, content_opt, tags_opt) with
+     | Some 1, Some pubkey_hex, Some content, tags ->
+       if Text_utils.contains_kana content then
+         (* Check if tags indicate bot *)
+         let tags_indicate_bot = match tags with
+           | Some (`List tag_list) ->
+             List.exists
+               (function
+                 | `List entries ->
+                   List.exists
+                     (function
+                       | `String s -> Bot_checker.tag_string_indicates_bot s
+                       | _ -> false)
+                     entries
+                 | _ -> false)
+               tag_list
+           | _ -> false
+         in
+         if tags_indicate_bot then None
+         else Some (pubkey_hex, content)
+       else None
      | _ -> None)
   | _ -> None
 
