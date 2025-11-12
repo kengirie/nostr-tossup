@@ -40,6 +40,21 @@ let create ?(default_timeout = 10.0) () =
 
 let normalize_url = Nostr_utils.normalize_url
 
+let contains_substring haystack needle =
+  let len_h = String.length haystack in
+  let len_n = String.length needle in
+  let rec loop i =
+    if i + len_n > len_h then false
+    else if String.sub haystack i len_n = needle then true
+    else loop (i + 1)
+  in
+  loop 0
+
+let is_closed_writer_error exn =
+  match exn with
+  | Failure msg when String.equal msg "cannot write to closed writer" -> true
+  | exn -> contains_substring (Printexc.to_string exn) "cannot write to closed writer"
+
 let ensure_relay_entry t relay_url =
   match Hashtbl.find_opt t.relays relay_url with
   | Some entry -> entry
@@ -47,6 +62,8 @@ let ensure_relay_entry t relay_url =
     let entry = { send = None; waiting = Hashtbl.create 4 } in
     Hashtbl.add t.relays relay_url entry;
     entry
+
+let annotate context message = Printf.sprintf "[%s] %s" context message
 
 let register_connection t ~relay_url ~send =
   let relay = normalize_url relay_url in
@@ -137,7 +154,7 @@ let publish_to_relay t ~clock ~timeout (event : Nostr_event.signed_event) relay_
   Eio.Mutex.lock t.mutex;
   let entry = ensure_relay_entry t relay in
   let send_opt = entry.send in
-  (match send_opt with
+    (match send_opt with
    | None ->
      Eio.Mutex.unlock t.mutex;
      { relay; outcome = Failed "relay not connected" }
@@ -152,6 +169,8 @@ let publish_to_relay t ~clock ~timeout (event : Nostr_event.signed_event) relay_
          send event.message;
          None
        with
+       | exn when is_closed_writer_error exn ->
+         Some "writer closed"
        | exn -> Some (Printexc.to_string exn)
      in
      (match send_result with
@@ -159,7 +178,7 @@ let publish_to_relay t ~clock ~timeout (event : Nostr_event.signed_event) relay_
         Eio.Mutex.lock t.mutex;
         remove_waiter entry event.id waiter;
         Eio.Mutex.unlock t.mutex;
-        { relay; outcome = Failed err }
+        { relay; outcome = Failed (annotate "nostr_publish send" err) }
       | None ->
         Eio.Mutex.lock t.mutex;
         let outcome = wait_for_outcome t entry event.id waiter ~clock timeout in

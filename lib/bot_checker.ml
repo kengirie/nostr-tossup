@@ -42,63 +42,30 @@ let tags_indicate_bot event =
 let event_indicates_bot event =
   content_indicates_bot event || tags_indicate_bot event
 
-let fetch_kind0_event ~clock ~subscriber ~relays ~timeout pubkey_hex =
+let fetch_kind0_event ~env ~clock ~ephemeral_pool ~relays ~timeout pubkey_hex =
   match relays with
   | [] -> None
   | _ ->
     let filter_json =
       Nostr_subscribe.Filter.(create ~authors:[pubkey_hex] ~kinds:[0] ~limit:1 () |> to_yojson)
     in
-    let promise, resolver = Promise.create () in
-    let resolved = ref false in
-    let resolve value =
-      if not !resolved then (
-        resolved := true;
-        Promise.resolve resolver value)
+    let events =
+      Nostr_ephemeral_pool.query
+        ephemeral_pool
+        ~env
+        ~clock
+        ~relays
+        ~filters:[filter_json]
+        ~timeout
+        ~label:"kind0-botcheck"
+        ()
     in
-    let subscription_ref = ref None in
-    let on_event event =
-      resolve (`Event event);
-      (match !subscription_ref with
-       | Some sub ->
-         subscription_ref := None;
-         Nostr_subscribe.close_subscription_handle subscriber sub
-       | None -> ())
-    in
-    let on_eose () = resolve `Eose in
-    let on_close reasons = resolve (`Closed reasons) in
-    let outcome =
-      try
-        let subscription =
-          Nostr_subscribe.subscribe_simple
-            subscriber
-            ~relays
-            ~filter:filter_json
-            ~on_event
-            ~on_eose
-            ~on_close
-            ()
-        in
-        subscription_ref := Some subscription;
-        (match Eio.Time.with_timeout clock timeout (fun () -> Ok (Promise.await promise)) with
-         | Ok value -> Some value
-         | Error `Timeout -> None)
-      with
-      | exn ->
-        traceln "Kind0 fetch error for %s: %s" pubkey_hex (Printexc.to_string exn);
-        None
-    in
-    (match !subscription_ref with
-     | Some sub ->
-       subscription_ref := None;
-       Nostr_subscribe.close_subscription_handle subscriber sub
-     | None -> ());
-    match outcome with
-    | Some (`Event event) -> Some event
-    | _ -> None
+    match events with
+    | event :: _ -> Some event
+    | [] -> None
 
-let classify_npub ~sw ~stdenv ~subscriber ~clock ~relays ?uri npub_hex npub =
-  match fetch_kind0_event ~clock ~subscriber ~relays ~timeout:30. npub_hex with
+let classify_npub ~sw ~stdenv ~ephemeral_pool ~env ~clock ~relays ?uri npub_hex npub =
+  match fetch_kind0_event ~env ~clock ~ephemeral_pool ~relays ~timeout:30. npub_hex with
   | None ->
     traceln "No kind0 event found for %s, marking as existing_user=1" npub;
     Database.with_connection ?uri ~sw ~stdenv @@ fun conn ->
@@ -117,14 +84,14 @@ let classify_npub ~sw ~stdenv ~subscriber ~clock ~relays ?uri npub_hex npub =
     | Error err -> Error err
 
 
-let start ~sw ~clock ~stdenv ~subscriber ?uri ?(relays = Config.subscribe_relays) ?(interval = 300.) () =
+let start ~sw ~clock ~stdenv ~ephemeral_pool ~env ?uri ?(relays = Config.periodic_relays) ?(interval = 300.) () =
   let rec loop () =
     (match Database.with_connection ?uri ~sw ~stdenv @@ fun conn ->
        User_repository.next_unclassified_user conn with
      | Ok (Some npub) ->
        (match Nostr_utils.npub_to_hex npub with
         | Ok pubkey_hex ->
-          (match classify_npub ~sw ~stdenv ~subscriber ~clock ~relays ?uri pubkey_hex npub with
+          (match classify_npub ~sw ~stdenv ~ephemeral_pool ~env ~clock ~relays ?uri pubkey_hex npub with
            | Ok () -> ()
            | Error err ->
              traceln "Failed to update is_bot for %s: %a" npub Caqti_error.pp err)

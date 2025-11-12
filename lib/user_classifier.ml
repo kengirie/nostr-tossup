@@ -1,56 +1,44 @@
 open Eio.Std
 
-let fetch_kind1_events ?until ~limit ~clock ~subscriber ~relays ~timeout pubkey_hex =
+let fetch_kind1_events
+    ?until
+    ~label
+    ~limit
+    ~env
+    ~clock
+    ~ephemeral_pool
+    ~relays
+    ~timeout
+    pubkey_hex =
   match relays with
   | [] -> []
   | _ ->
     let filter_json =
       Nostr_subscribe.Filter.(create ~authors:[pubkey_hex] ~kinds:[1] ?until ~limit () |> to_yojson)
     in
-    let events = ref [] in
-    let promise, resolver = Promise.create () in
-    let resolved = ref false in
-    let resolve () =
-      if not !resolved then (
-        resolved := true;
-        Promise.resolve resolver ())
-    in
-    let subscription_ref = ref None in
-    let on_event event =
-      events := event :: !events
-    in
-    let on_eose () = resolve () in
-    let on_close _reasons = resolve () in
-    let _outcome =
-      try
-        let subscription =
-          Nostr_subscribe.subscribe_simple
-            subscriber
-            ~relays
-            ~filter:filter_json
-            ~on_event
-            ~on_eose
-            ~on_close
-            ()
-        in
-        subscription_ref := Some subscription;
-        (match Eio.Time.with_timeout clock timeout (fun () -> Ok (Promise.await promise)) with
-         | Ok () -> !events
-         | Error `Timeout -> !events)
-      with
-      | exn ->
-        traceln "Kind1 fetch error for %s: %s" pubkey_hex (Printexc.to_string exn);
-        !events
-    in
-    (match !subscription_ref with
-     | Some sub ->
-       subscription_ref := None;
-       Nostr_subscribe.close_subscription_handle subscriber sub
-     | None -> ());
-    !events
+    Nostr_ephemeral_pool.query
+      ephemeral_pool
+      ~env
+      ~clock
+      ~relays
+      ~filters:[filter_json]
+      ~timeout
+      ~label:label
+      ()
 
-let check_kind1_kana ~sw ~stdenv ~subscriber ~clock ~relays ?uri npub_hex npub =
-  let kind1_events = fetch_kind1_events ~limit:5 ~clock ~subscriber ~relays ~timeout:30. npub_hex in
+let check_kind1_kana ~sw ~stdenv ~ephemeral_pool ~env ~clock ~relays ?uri npub_hex npub =
+  let kind1_events =
+    fetch_kind1_events
+      ~label:"kind1-kana"
+      ~limit:5
+      ~env
+      ~clock
+      ~ephemeral_pool
+      ~relays
+      ~timeout:30.
+      npub_hex
+  in
+  traceln "kind1 kana fetch for %s: %d events" npub (List.length kind1_events);
   match kind1_events with
   | [] ->
     traceln "No kind1 events found for %s, keeping existing_user=0" npub;
@@ -74,9 +62,21 @@ let check_kind1_kana ~sw ~stdenv ~subscriber ~clock ~relays ?uri npub_hex npub =
       Ok ()
     )
 
-let check_old_kind1 ~sw ~stdenv ~subscriber ~clock ~relays ?uri npub_hex npub =
+let check_old_kind1 ~sw ~stdenv ~ephemeral_pool ~env ~clock ~relays ?uri npub_hex npub =
   let six_months_ago = Int64.to_int (Int64.sub (Int64.of_float (Unix.time ())) (Int64.of_int (6 * 30 * 24 * 3600))) in
-  let kind1_events = fetch_kind1_events ~until:six_months_ago ~limit:1 ~clock ~subscriber ~relays ~timeout:30. npub_hex in
+  let kind1_events =
+    fetch_kind1_events
+      ~until:six_months_ago
+      ~label:"kind1-old"
+      ~limit:1
+      ~env
+      ~clock
+      ~ephemeral_pool
+      ~relays
+      ~timeout:30.
+      npub_hex
+  in
+  traceln "kind1 old fetch for %s: %d events" npub (List.length kind1_events);
   match kind1_events with
   | [] ->
     traceln "No old kind1 events found for %s, keeping existing_user=0" npub;
@@ -117,7 +117,7 @@ let retry_db_operation ~clock f max_retries delay =
   in
   loop max_retries
 
-let start ~sw ~clock ~stdenv ~subscriber ?uri ?(relays = Config.subscribe_relays) ?(interval = 120.) () =
+let start ~sw ~clock ~stdenv ~ephemeral_pool ~env ?uri ?(relays = Config.periodic_relays) ?(interval = 300.) () =
   let rec kana_check_loop () =
     (match retry_db_operation ~clock (fun () ->
        Database.with_connection ?uri ~sw ~stdenv @@ fun conn ->
@@ -125,7 +125,7 @@ let start ~sw ~clock ~stdenv ~subscriber ?uri ?(relays = Config.subscribe_relays
      | Ok (Some npub) ->
        (match Nostr_utils.npub_to_hex npub with
         | Ok pubkey_hex ->
-          (match check_kind1_kana ~sw ~stdenv ~subscriber ~clock ~relays ?uri pubkey_hex npub with
+          (match check_kind1_kana ~sw ~stdenv ~ephemeral_pool ~env ~clock ~relays ?uri pubkey_hex npub with
            | Ok () -> ()
            | Error err ->
              traceln "Failed to check kind1 kana for %s: %a" npub Caqti_error.pp err)
@@ -144,10 +144,10 @@ let start ~sw ~clock ~stdenv ~subscriber ?uri ?(relays = Config.subscribe_relays
      | Ok (Some npub) ->
        (match Nostr_utils.npub_to_hex npub with
         | Ok pubkey_hex ->
-          (match check_old_kind1 ~sw ~stdenv ~subscriber ~clock ~relays ?uri pubkey_hex npub with
-           | Ok () -> ()
-           | Error err ->
-             traceln "Failed to check old kind1 for %s: %a" npub Caqti_error.pp err)
+          (match check_old_kind1 ~sw ~stdenv ~ephemeral_pool ~env ~clock ~relays ?uri pubkey_hex npub with
+            | Ok () -> ()
+            | Error err ->
+              traceln "Failed to check old kind1 for %s: %a" npub Caqti_error.pp err)
         | Error msg ->
           traceln "Failed to decode npub %s for old kind1 check: %s" npub msg)
      | Ok None -> ()
@@ -158,5 +158,5 @@ let start ~sw ~clock ~stdenv ~subscriber ?uri ?(relays = Config.subscribe_relays
 
   Fiber.fork ~sw (fun () -> kana_check_loop ());
   Fiber.fork ~sw (fun () ->
-    Eio.Time.sleep clock 15.;  (* Wait 15 seconds before starting *)
+    Eio.Time.sleep clock 30.;  (* Wait 15 seconds before starting *)
     old_kind1_check_loop ())

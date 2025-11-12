@@ -24,6 +24,7 @@ let main env =
   let clock = Eio.Stdenv.clock env in
   let publisher = Nostr_tossup.Nostr_publish.create () in
   let subscriber = Nostr_tossup.Nostr_subscribe.create () in
+  let ephemeral_pool = Nostr_tossup.Nostr_ephemeral_pool.create ~config in
   let run_connections () =
     Switch.run (fun sw ->
         Nostr_tossup.Kind30078_publisher.start
@@ -58,25 +59,37 @@ let main env =
           ~sw
           ~clock
           ~stdenv
-          ~subscriber
+          ~ephemeral_pool
+          ~env
           ();
         Nostr_tossup.User_classifier.start
           ~sw
           ~clock
           ~stdenv
-          ~subscriber
+          ~ephemeral_pool
+          ~env
           ();
-        (* Then connect to relays *)
-        Nostr_tossup.Nostr_subscribe.connect_to_relays
-          subscriber
-          ~publisher
-          env config None)
+        (* Then connect to relays in a dedicated fiber with retries *)
+        Fiber.fork ~sw (fun () ->
+            let rec loop attempt =
+              try
+                Nostr_tossup.Nostr_subscribe.connect_to_relays
+                  subscriber
+                  ~publisher
+                  env config None
+              with exn ->
+                traceln "[connect_to_relays] unexpected stop (attempt %d): %s" attempt (Printexc.to_string exn);
+                Eio.Time.sleep clock Nostr_tossup.Config.reconnect_delay;
+                loop (attempt + 1)
+            in
+            loop 1);
+        Fiber.await_cancel ())
   in
 
   (try
      run_connections ()
    with
-   | Failure _ -> ()
-   | _ -> ())
+   | Failure msg -> traceln "run_connections stopped: %s" msg
+   | exn -> traceln "run_connections stopped: %s" (Printexc.to_string exn))
 
 let () = Eio_main.run main

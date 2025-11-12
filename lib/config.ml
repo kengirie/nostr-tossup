@@ -10,12 +10,17 @@ let publish_relays = [
 let subscribe_relays = [
   "https://relay.damus.io";
   "https://nos.lol";
-  "https://r.kojira.io";
+  "https://relay.nostr.band";
+]
+
+let periodic_relays = [
+  "https://nos.lol";
+  "https://nostr.mom";
   "https://relay.nostr.band";
 ]
 
 let all_relays =
-  List.sort_uniq String.compare (publish_relays @ subscribe_relays)
+  List.sort_uniq String.compare (publish_relays @ subscribe_relays @ periodic_relays)
 
 (* Reconnection settings *)
 let reconnect_delay = 20.0

@@ -74,6 +74,37 @@ let log_req relay sub_id filters =
   let filters_json = Yojson.Safe.to_string (`List filters) in
   traceln "[%s] Sending REQ %s with filters %s" relay sub_id filters_json
 
+let sanitize_payload payload =
+  let len = String.length payload in
+  let snippet_len = min len 200 in
+  let buf = Bytes.create snippet_len in
+  for i = 0 to snippet_len - 1 do
+    let ch = payload.[i] in
+    let mapped =
+      if Char.code ch < 32 || Char.code ch > 126 then '.' else ch
+    in
+    Bytes.set buf i mapped
+  done;
+  let snippet = Bytes.to_string buf in
+  if len > snippet_len then snippet ^ "..." else snippet
+
+let hex_snippet payload =
+  let len = String.length payload in
+  let snippet_len = min len 32 in
+  let buf = Buffer.create (snippet_len * 3) in
+  for i = 0 to snippet_len - 1 do
+    Buffer.add_string buf (Printf.sprintf "%02x" (Char.code payload.[i]));
+    if i < snippet_len - 1 then Buffer.add_char buf ' '
+  done;
+  let hex = Buffer.contents buf in
+  if len > snippet_len then hex ^ " ..." else hex
+
+let log_ws_send ?(enabled = true) _relay _payload =
+  if enabled then ()
+
+let log_ws_recv ?(enabled = true) _relay _payload =
+  if enabled then ()
+
 let build_close sub_id =
   Yojson.Safe.to_string (`List [ `String "CLOSE"; `String sub_id ])
 
@@ -89,6 +120,24 @@ let string_member name json =
 
 let collect_relay_results tbl =
   Hashtbl.fold (fun _ reason acc -> reason :: acc) tbl []
+
+let contains_substring haystack needle =
+  let len_h = String.length haystack in
+  let len_n = String.length needle in
+  let rec loop i =
+    if i + len_n > len_h then false
+    else if String.sub haystack i len_n = needle then true
+    else loop (i + 1)
+  in
+  loop 0
+
+let is_closed_writer_error exn =
+  match exn with
+  | Failure msg when String.equal msg "cannot write to closed writer" -> true
+  | exn -> contains_substring (Printexc.to_string exn) "cannot write to closed writer"
+
+let log_and_ignore context exn =
+  traceln "%s: %s" context (Printexc.to_string exn)
 
 module Subscription = struct
   type relay_state = {
@@ -140,12 +189,12 @@ let ensure_relay_entry t relay =
   match Hashtbl.find_opt t.relays relay with
   | Some entry -> entry
   | None ->
-    let entry = { 
-      send = None; 
+    let entry = {
+      send = None;
       ws_descriptor = None;
       connected = false;
       connection_state = { last_message = Unix.gettimeofday () };
-      subscriptions = Hashtbl.create 8 
+      subscriptions = Hashtbl.create 8;
     } in
     Hashtbl.add t.relays relay entry;
     entry
@@ -381,12 +430,13 @@ let create_keepalive_request keepalive_id =
     ];
   ]
 
-let send_initial_event _relay_url ws_descriptor event =
+let send_initial_event relay_url ws_descriptor event =
   let open Nostr_event in
   match event with
   | None -> ()
   | Some { message; _ } ->
     (try
+       log_ws_send ~enabled:false relay_url message;
        Ws.Descriptor.send_string ws_descriptor message
      with _ -> ())
 
@@ -395,8 +445,9 @@ let rec recv_loop relay_name messages ws_descriptor state t publisher =
   | Some (_opcode, iovec) ->
     let received_string = Bigstringaf.substring iovec.Faraday.buffer ~off:iovec.Faraday.off ~len:iovec.Faraday.len in
     state.last_message <- Unix.gettimeofday ();
+    log_ws_recv ~enabled:false relay_name received_string;
     (try
-       let json = Yojson.Safe.from_string received_string in
+      let json = Yojson.Safe.from_string received_string in
        match json with
        | `List [ `String "EVENT"; `String sub_id; event_obj ] ->
          handle_event t ~relay_url:relay_name ~subscription_id:sub_id ~event:event_obj
@@ -484,10 +535,13 @@ let connect_to_relay t ~config ~sw ?publisher ?on_relay_connected env relay_url 
             send_initial_event relay_url ws_descriptor event;
 
             let send message =
+              log_ws_send ~enabled:false relay_url message;
               try Ws.Descriptor.send_string ws_descriptor message with
               | exn ->
-                traceln "[%s] Failed to send message: %s" relay_url (Printexc.to_string exn);
-                raise exn
+                if is_closed_writer_error exn then
+                  log_and_ignore (Printf.sprintf "subscriber send skipped (%s)" relay_url) exn
+                else
+                  raise (Failure (Printf.sprintf "subscriber send (%s): %s" relay_url (Printexc.to_string exn)))
             in
             entry.send <- Some send;
 
@@ -522,11 +576,14 @@ let connect_to_relay t ~config ~sw ?publisher ?on_relay_connected env relay_url 
                   let keepalive_request = create_keepalive_request keepalive_id in
                   let request_string = Yojson.Safe.to_string keepalive_request in
                   (try
-                    send request_string;
-                    entry.connection_state.last_message <- Unix.gettimeofday ()
-                  with e ->
-                    traceln "[%s] Failed to send keepalive: %s" relay_url (Printexc.to_string e);
-                    raise e);
+                     send request_string;
+                     entry.connection_state.last_message <- Unix.gettimeofday ()
+                   with e ->
+                     if is_closed_writer_error e then
+                       log_and_ignore (Printf.sprintf "keepalive skipped (%s)" relay_url) e
+                     else (
+                       traceln "[%s] Failed to send keepalive: %s" relay_url (Printexc.to_string e);
+                       raise (Failure (Printf.sprintf "keepalive (%s): %s" relay_url (Printexc.to_string e)))));
                   keepalive_loop ()
                 in
                 keepalive_loop ())
