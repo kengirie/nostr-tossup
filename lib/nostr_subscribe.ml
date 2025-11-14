@@ -440,7 +440,7 @@ let send_initial_event relay_url ws_descriptor event =
        Ws.Descriptor.send_string ws_descriptor message
      with _ -> ())
 
-let rec recv_loop relay_name messages ws_descriptor state t publisher =
+let rec recv_loop relay_name messages ws_descriptor state t =
   match Piaf.Stream.take messages with
   | Some (_opcode, iovec) ->
     let received_string = Bigstringaf.substring iovec.Faraday.buffer ~off:iovec.Faraday.off ~len:iovec.Faraday.len in
@@ -453,36 +453,15 @@ let rec recv_loop relay_name messages ws_descriptor state t publisher =
          handle_event t ~relay_url:relay_name ~subscription_id:sub_id ~event:event_obj
        | `List [ `String "EOSE"; `String sub_id ] ->
          handle_eose t ~relay_url:relay_name ~subscription_id:sub_id
-       | `List [ `String "OK"; `String event_id; status; message_json ] ->
-         let ok =
-           match status with
-           | `Bool b -> b
-           | `Int 1 -> true
-           | `Int 0 -> false
-           | `Intlit s -> (try int_of_string s <> 0 with _ -> false)
-           | `String s ->
-             (match String.lowercase_ascii s with
-              | "true" | "ok" | "yes" -> true
-              | _ -> false)
-           | _ -> false
-         in
-         let message =
-           match message_json with
-           | `String s -> s
-           | _ -> Yojson.Safe.to_string message_json
-         in
-         (match publisher with
-          | Some pool -> Nostr_publish.handle_ok pool ~relay_url:relay_name ~event_id ~ok ~message
-          | None -> ());
+       | `List [ `String "OK"; `String _event_id; _status; _message_json ] ->
+         ()
        | `List [ `String "NOTICE"; message_json ] ->
          let message =
            match message_json with
            | `String s -> s
            | _ -> Yojson.Safe.to_string message_json
          in
-         (match publisher with
-         | Some pool -> Nostr_publish.handle_notice pool ~relay_url:relay_name ~message
-          | None -> ());
+         traceln "[%s] NOTICE: %s" relay_name message;
        | `List [ `String "CLOSED"; `String sub_id; reason_json ] ->
          let reason =
            match reason_json with
@@ -497,12 +476,12 @@ let rec recv_loop relay_name messages ws_descriptor state t publisher =
      with
      | Yojson.Json_error msg ->
        traceln "[%s] JSON parse error: %s" relay_name msg);
-    recv_loop relay_name messages ws_descriptor state t publisher
+    recv_loop relay_name messages ws_descriptor state t
   | None ->
     traceln "[%s] Connection closed" relay_name;
     raise (Failure "Connection closed")
 
-let connect_to_relay t ~config ~sw ?publisher ?on_relay_connected env relay_url event =
+let connect_to_relay t ~config ~sw ?on_relay_connected env relay_url event =
   let relay = normalize_url relay_url in
   let entry = ensure_relay_entry t relay in
   let uri = Uri.of_string relay_url in
@@ -526,10 +505,7 @@ let connect_to_relay t ~config ~sw ?publisher ?on_relay_connected env relay_url 
         ~finally:(fun () ->
           entry.connected <- false;
           entry.ws_descriptor <- None;
-          entry.send <- None;
-          match publisher with
-          | Some pool -> Nostr_publish.detach_connection pool ~relay_url ~reason:"connection closed"
-          | None -> ())
+          entry.send <- None)
         (fun () ->
           try
             send_initial_event relay_url ws_descriptor event;
@@ -545,10 +521,6 @@ let connect_to_relay t ~config ~sw ?publisher ?on_relay_connected env relay_url 
             in
             entry.send <- Some send;
 
-            (match publisher with
-             | Some pool -> Nostr_publish.register_connection pool ~relay_url ~send
-             | None -> ());
-
             (* Register this connection for subscription management *)
             register_connection t ~relay_url ~send;
 
@@ -558,38 +530,9 @@ let connect_to_relay t ~config ~sw ?publisher ?on_relay_connected env relay_url 
 
             let messages = Ws.Descriptor.messages ws_descriptor in
 
-            Fiber.both
-              (fun () ->
-                let keepalive_counter = ref 0 in
-                let rec keepalive_loop () =
-                  Eio.Time.sleep (Eio.Stdenv.clock env) Config.keepalive_interval;
-
-                  let now = Unix.gettimeofday () in
-                  let time_since_message = now -. entry.connection_state.last_message in
-                  if time_since_message > (Config.keepalive_interval +. Config.eose_timeout) then (
-                    traceln "[%s] Keep-alive timeout (%.1fs since last message)" relay_url time_since_message;
-                    raise (Failure "Keep-alive timeout")
-                  );
-
-                  incr keepalive_counter;
-                  let keepalive_id = Printf.sprintf "keepalive_%d" !keepalive_counter in
-                  let keepalive_request = create_keepalive_request keepalive_id in
-                  let request_string = Yojson.Safe.to_string keepalive_request in
-                  (try
-                     send request_string;
-                     entry.connection_state.last_message <- Unix.gettimeofday ()
-                   with e ->
-                     if is_closed_writer_error e then
-                       log_and_ignore (Printf.sprintf "keepalive skipped (%s)" relay_url) e
-                     else (
-                       traceln "[%s] Failed to send keepalive: %s" relay_url (Printexc.to_string e);
-                       raise (Failure (Printf.sprintf "keepalive (%s): %s" relay_url (Printexc.to_string e)))));
-                  keepalive_loop ()
-                in
-                keepalive_loop ())
-              (fun () ->
-                recv_loop relay_url messages ws_descriptor entry.connection_state t publisher);
-            Ok ()
+            (* Keep alive disabled - recv_loop handles connection monitoring *)
+            (recv_loop relay_url messages ws_descriptor entry.connection_state t : unit);
+            assert false (* recv_loop never returns normally *)
           with
           | Failure msg ->
             traceln "[%s] ❌ Connection error: %s" relay_url msg;
@@ -598,14 +541,14 @@ let connect_to_relay t ~config ~sw ?publisher ?on_relay_connected env relay_url 
             traceln "[%s] ❌ Unexpected error: %s" relay_url (Printexc.to_string e);
             Error (Printexc.to_string e))
 
-let connect_to_all_relays t ?publisher ?on_relay_connected env config event =
-  let relays_to_connect = Config.subscribe_relays @ Config.publish_relays |> List.sort_uniq String.compare in
+let connect_to_all_relays t ?on_relay_connected env config event =
+  let relays_to_connect = Config.subscribe_relays |> List.sort_uniq String.compare in
   let connect_to_single_relay relay_url =
     fun () ->
       let rec retry_loop attempt =
         try
           Switch.run (fun sw ->
-            match connect_to_relay t ~config ~sw ?publisher ?on_relay_connected env relay_url event with
+            match connect_to_relay t ~config ~sw ?on_relay_connected env relay_url event with
             | Ok () -> ()
             | Error msg -> raise (Failure msg))
         with

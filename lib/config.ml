@@ -16,7 +16,7 @@ let subscribe_relays = [
 let periodic_relays = [
   "https://nos.lol";
   "https://nostr.mom";
-  "https://relay.nostr.band";
+  "https://relay.damus.io";
 ]
 
 let all_relays =

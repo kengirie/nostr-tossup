@@ -22,7 +22,7 @@ let main env =
       failwith "Missing NOSTR_NSEC secret"
   in
   let clock = Eio.Stdenv.clock env in
-  let publisher = Nostr_tossup.Nostr_publish.create () in
+  let publisher = Nostr_tossup.Nostr_publish.create ~config () in
   let subscriber = Nostr_tossup.Nostr_subscribe.create () in
   let ephemeral_pool = Nostr_tossup.Nostr_ephemeral_pool.create ~config in
   let run_connections () =
@@ -33,6 +33,7 @@ let main env =
           ~sw
           ~clock
           ~stdenv
+          ~env
           ~keypair
           ();
         let enqueue_candidate =
@@ -75,7 +76,6 @@ let main env =
               try
                 Nostr_tossup.Nostr_subscribe.connect_to_relays
                   subscriber
-                  ~publisher
                   env config None
               with exn ->
                 traceln "[connect_to_relays] unexpected stop (attempt %d): %s" attempt (Printexc.to_string exn);

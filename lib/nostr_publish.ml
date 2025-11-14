@@ -1,3 +1,6 @@
+open Eio.Std
+module Ws = Piaf.Ws
+
 (* Outcome of a publish attempt to a relay *)
 type outcome =
   | Ack of string
@@ -11,181 +14,123 @@ type result = {
   outcome : outcome;
 }
 
-(* Internal state for a waiter awaiting an acknowledgement *)
-type waiter = {
-  cond : Eio.Condition.t;
-  mutable outcome : outcome option;
-}
-
-(* State tracked per relay connection *)
-type relay_entry = {
-  mutable send : (string -> unit) option;
-  waiting : (string, waiter list) Hashtbl.t;
-}
-
 (* Publisher state *)
 type t = {
-  relays : (string, relay_entry) Hashtbl.t;
-  mutex : Eio.Mutex.t;
+  config : Piaf.Config.t;
   default_timeout : float;
   mutable last_notice : (string * string) option;
+  mutex : Eio.Mutex.t;
 }
 
-let create ?(default_timeout = 10.0) () =
-  { relays = Hashtbl.create 8;
-    mutex = Eio.Mutex.create ();
+let create ?(default_timeout = 10.0) ~config () =
+  { config;
     default_timeout;
     last_notice = None;
+    mutex = Eio.Mutex.create ();
   }
 
 let normalize_url = Nostr_utils.normalize_url
 
-let contains_substring haystack needle =
-  let len_h = String.length haystack in
-  let len_n = String.length needle in
-  let rec loop i =
-    if i + len_n > len_h then false
-    else if String.sub haystack i len_n = needle then true
-    else loop (i + 1)
-  in
-  loop 0
-
-let is_closed_writer_error exn =
-  match exn with
-  | Failure msg when String.equal msg "cannot write to closed writer" -> true
-  | exn -> contains_substring (Printexc.to_string exn) "cannot write to closed writer"
-
-let ensure_relay_entry t relay_url =
-  match Hashtbl.find_opt t.relays relay_url with
-  | Some entry -> entry
-  | None ->
-    let entry = { send = None; waiting = Hashtbl.create 4 } in
-    Hashtbl.add t.relays relay_url entry;
-    entry
-
 let annotate context message = Printf.sprintf "[%s] %s" context message
 
-let register_connection t ~relay_url ~send =
-  let relay = normalize_url relay_url in
-  Eio.Mutex.lock t.mutex;
-  let entry = ensure_relay_entry t relay in
-  entry.send <- Some send;
-  (* On reconnect we keep outstanding waiters; they will receive either OK or timeout *)
-  Eio.Mutex.unlock t.mutex
+let piaf_error_to_string err = Format.asprintf "%a" Piaf.Error.pp_hum err
 
-let remove_waiter entry event_id waiter =
-  match Hashtbl.find_opt entry.waiting event_id with
-  | None -> ()
-  | Some waiters ->
-    let remaining = List.filter (fun w -> w != waiter) waiters in
-    if remaining = [] then
-      Hashtbl.remove entry.waiting event_id
-    else
-      Hashtbl.replace entry.waiting event_id remaining
+let yojson_to_string = function
+  | `String s -> s
+  | json -> Yojson.Safe.to_string json
 
-let notify_all entry event_id outcome =
-  match Hashtbl.find_opt entry.waiting event_id with
-  | None -> ()
-  | Some waiters ->
-    Hashtbl.remove entry.waiting event_id;
-    List.iter
-      (fun waiter ->
-        (match waiter.outcome with
-         | None -> waiter.outcome <- Some outcome
-         | Some _ -> ());
-        Eio.Condition.broadcast waiter.cond)
-      waiters
-
-let handle_ok t ~relay_url ~event_id ~ok ~message =
-  let relay = normalize_url relay_url in
-  Eio.Mutex.lock t.mutex;
-  (match Hashtbl.find_opt t.relays relay with
-   | None -> ()
-   | Some entry ->
-     let outcome = if ok then Ack message else Rejected message in
-     notify_all entry event_id outcome);
-  Eio.Mutex.unlock t.mutex
-
-let handle_notice t ~relay_url ~message =
-  let relay = normalize_url relay_url in
+let set_last_notice t relay message =
   Eio.Mutex.lock t.mutex;
   t.last_notice <- Some (relay, message);
-  (* Leave outstanding waiters untouched; notice may not relate to specific event *)
   Eio.Mutex.unlock t.mutex
 
-let detach_connection t ~relay_url ~reason =
+let parse_ok_status = function
+  | `Bool b -> b
+  | `Int 1 -> true
+  | `Int 0 -> false
+  | `Intlit s -> (try int_of_string s <> 0 with _ -> false)
+  | `String s ->
+    (match String.lowercase_ascii s with
+     | "true" | "ok" | "yes" -> true
+     | _ -> false)
+  | _ -> false
+
+let send_event relay ws message =
+  try
+    Ws.Descriptor.send_string ws message;
+    Ok ()
+  with exn ->
+    let reason = Printexc.to_string exn in
+    Error (annotate (Printf.sprintf "send %s" relay) reason)
+
+let rec wait_for_ack t ~relay ~event_id messages =
+  match
+    (try Ok (Piaf.Stream.take messages) with
+     | exn -> Error (annotate "stream take" (Printexc.to_string exn)))
+  with
+  | Error reason -> Failed reason
+  | Ok None -> Failed "connection closed before acknowledgement"
+  | Ok (Some (_opcode, iovec)) ->
+    let payload =
+      Bigstringaf.substring iovec.Faraday.buffer ~off:iovec.Faraday.off ~len:iovec.Faraday.len
+    in
+    (try
+       match Yojson.Safe.from_string payload with
+       | `List [ `String "OK"; `String eid; status; message_json ] when String.equal eid event_id ->
+         let ok = parse_ok_status status in
+         let message = yojson_to_string message_json in
+         if ok then Ack message else Rejected message
+       | `List [ `String "NOTICE"; message_json ] ->
+         let message = yojson_to_string message_json in
+         set_last_notice t relay message;
+         traceln "[%s] NOTICE: %s" relay message;
+         wait_for_ack t ~relay ~event_id messages
+       | `List [ `String "CLOSED"; reason_json ] ->
+         let message = yojson_to_string reason_json in
+         Failed (annotate "relay closed" message)
+       | `List [ `String "CLOSED"; _; reason_json ] ->
+         let message = yojson_to_string reason_json in
+         Failed (annotate "relay closed" message)
+       | _ -> wait_for_ack t ~relay ~event_id messages
+     with
+     | Yojson.Json_error msg ->
+       traceln "[%s] JSON parse error: %s" relay msg;
+       wait_for_ack t ~relay ~event_id messages)
+
+let publish_to_relay t ~clock ~timeout ~env (event : Nostr_event.signed_event) relay_url =
   let relay = normalize_url relay_url in
-  Eio.Mutex.lock t.mutex;
-  (match Hashtbl.find_opt t.relays relay with
-   | None -> ()
-   | Some entry ->
-     entry.send <- None;
-      Hashtbl.iter
-        (fun _event_id waiters ->
-         List.iter
-           (fun waiter ->
-             (match waiter.outcome with
-              | None -> waiter.outcome <- Some (Failed reason)
-              | Some _ -> ());
-             Eio.Condition.broadcast waiter.cond)
-           waiters)
-       entry.waiting;
-     Hashtbl.clear entry.waiting);
-  Eio.Mutex.unlock t.mutex
-
-let wait_for_outcome t entry event_id waiter ~clock timeout =
-  let rec loop () =
-    match waiter.outcome with
-    | Some outcome -> outcome
-    | None ->
-      (try
-         Eio.Time.with_timeout_exn clock timeout (fun () -> Eio.Condition.await waiter.cond t.mutex)
-       with
-       | Eio.Time.Timeout ->
-         waiter.outcome <- Some Timeout);
-      loop ()
+  let uri = Uri.of_string relay in
+  let attempt () =
+    Switch.run (fun sw ->
+        match Piaf.Client.create ~config:t.config ~sw env uri with
+        | Error err -> Error (annotate "client create" (piaf_error_to_string err))
+        | Ok client ->
+          match Piaf.Client.ws_upgrade client "/" with
+          | Error err -> Error (annotate "websocket upgrade" (piaf_error_to_string err))
+          | Ok ws_descriptor ->
+            let cleanup () =
+              (try Ws.Descriptor.close ws_descriptor with _ -> ());
+              (try Piaf.Client.shutdown client with _ -> ())
+            in
+            Fun.protect
+              ~finally:cleanup
+              (fun () ->
+                match send_event relay ws_descriptor event.message with
+                | Error reason -> Error reason
+                | Ok () ->
+                  let messages = Ws.Descriptor.messages ws_descriptor in
+                  let outcome =
+                    match Eio.Time.with_timeout clock timeout (fun () -> Ok (wait_for_ack t ~relay ~event_id:event.id messages)) with
+                    | Ok result -> result
+                    | Error `Timeout -> Timeout
+                  in
+                  Ok outcome))
   in
-  let outcome = loop () in
-  remove_waiter entry event_id waiter;
-  outcome
+  match attempt () with
+  | Ok outcome -> { relay; outcome }
+  | Error reason -> { relay; outcome = Failed reason }
 
-let publish_to_relay t ~clock ~timeout (event : Nostr_event.signed_event) relay_url =
-  let relay = normalize_url relay_url in
-  Eio.Mutex.lock t.mutex;
-  let entry = ensure_relay_entry t relay in
-  let send_opt = entry.send in
-    (match send_opt with
-   | None ->
-     Eio.Mutex.unlock t.mutex;
-     { relay; outcome = Failed "relay not connected" }
-   | Some send ->
-     let waiter = { cond = Eio.Condition.create (); outcome = None } in
-     let existing = Hashtbl.find_opt entry.waiting event.id in
-     let updated = waiter :: Option.value existing ~default:[] in
-     Hashtbl.replace entry.waiting event.id updated;
-     Eio.Mutex.unlock t.mutex;
-     let send_result =
-       try
-         send event.message;
-         None
-       with
-       | exn when is_closed_writer_error exn ->
-         Some "writer closed"
-       | exn -> Some (Printexc.to_string exn)
-     in
-     (match send_result with
-      | Some err ->
-        Eio.Mutex.lock t.mutex;
-        remove_waiter entry event.id waiter;
-        Eio.Mutex.unlock t.mutex;
-        { relay; outcome = Failed (annotate "nostr_publish send" err) }
-      | None ->
-        Eio.Mutex.lock t.mutex;
-        let outcome = wait_for_outcome t entry event.id waiter ~clock timeout in
-        Eio.Mutex.unlock t.mutex;
-        { relay; outcome }))
-
-let publish t ~clock ?timeout ~relays (event : Nostr_event.signed_event) =
+let publish t ~clock ~env ?timeout ~relays (event : Nostr_event.signed_event) =
   let timeout = Option.value timeout ~default:t.default_timeout in
   let deduped =
     relays
@@ -193,14 +138,13 @@ let publish t ~clock ?timeout ~relays (event : Nostr_event.signed_event) =
     |> List.sort_uniq String.compare
   in
   List.map (fun relay_url ->
-    (* Create independent message copy for each relay to avoid stream corruption *)
-    let event_copy = {
-      Nostr_event.json = event.json;
-      message = Bytes.to_string (Bytes.of_string event.message);
-      id = event.id
-    } in
-    publish_to_relay t ~clock ~timeout event_copy relay_url
-  ) deduped
+      let event_copy = {
+        Nostr_event.json = event.json;
+        message = Bytes.to_string (Bytes.of_string event.message);
+        id = event.id;
+      } in
+      publish_to_relay t ~clock ~timeout ~env event_copy relay_url)
+    deduped
 
 let last_notice t =
   Eio.Mutex.lock t.mutex;

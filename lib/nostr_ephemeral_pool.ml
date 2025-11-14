@@ -163,27 +163,33 @@ let query t ~env ~clock ~relays ~filters ~timeout ?label () =
     let results = ref [] in
     let known = Hashtbl.create 64 in
     let mutex = Eio.Mutex.create () in
-    Switch.run (fun sw ->
-        List.iter
-          (fun relay ->
-            Fiber.fork ~sw (fun () ->
-                let relay_events =
-                  try
-                    collect_from_relay t ~env ~sw ~clock ~relay_url:relay ~filters ~timeout ?label ()
-                  with exn ->
-                    traceln "[%s] Ephemeral query error: %s" relay (Printexc.to_string exn);
-                    []
-                in
-                if relay_events <> [] then (
-                  Eio.Mutex.lock mutex;
-                  List.iter
-                    (fun event ->
-                      match Nostr_subscribe.event_id event with
-                      | Some id when not (Hashtbl.mem known id) ->
-                        Hashtbl.add known id ();
-                        results := event :: !results
-                      | _ -> ())
-                    relay_events;
-                  Eio.Mutex.unlock mutex)))
-          deduped_relays);
+    (try
+       Switch.run (fun sw ->
+           List.iter
+             (fun relay ->
+               Fiber.fork ~sw (fun () ->
+                   let relay_events =
+                     try
+                       collect_from_relay t ~env ~sw ~clock ~relay_url:relay ~filters ~timeout ?label ()
+                     with exn ->
+                       traceln "[%s] Ephemeral query error: %s" relay (Printexc.to_string exn);
+                       []
+                   in
+                   if relay_events <> [] then (
+                     Eio.Mutex.lock mutex;
+                     List.iter
+                       (fun event ->
+                         match Nostr_subscribe.event_id event with
+                         | Some id when not (Hashtbl.mem known id) ->
+                           Hashtbl.add known id ();
+                           results := event :: !results
+                         | _ -> ())
+                       relay_events;
+                     Eio.Mutex.unlock mutex)))
+             deduped_relays)
+     with
+     | Eio.Cancel.Cancelled _ as exn ->
+       traceln "Ephemeral query cancelled: %s" (Printexc.to_string exn)
+     | exn ->
+       traceln "Ephemeral query aborted: %s" (Printexc.to_string exn));
     List.rev !results
