@@ -62,6 +62,7 @@ let main env =
           ~stdenv
           ~ephemeral_pool
           ~env
+          ~initial_delay:100.
           ();
         Nostr_tossup.User_classifier.start
           ~sw
@@ -69,6 +70,8 @@ let main env =
           ~stdenv
           ~ephemeral_pool
           ~env
+          ~kana_start_delay:300.
+          ~old_start_delay:600.
           ();
         (* Then connect to relays in a dedicated fiber with retries *)
         Fiber.fork ~sw (fun () ->

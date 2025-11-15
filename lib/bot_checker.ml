@@ -84,7 +84,17 @@ let classify_npub ~sw ~stdenv ~ephemeral_pool ~env ~clock ~relays ?uri npub_hex 
     | Error err -> Error err
 
 
-let start ~sw ~clock ~stdenv ~ephemeral_pool ~env ?uri ?(relays = Config.periodic_relays) ?(interval = 300.) () =
+let start
+    ~sw
+    ~clock
+    ~stdenv
+    ~ephemeral_pool
+    ~env
+    ?uri
+    ?(relays = Config.periodic_relays)
+    ?(interval = 600.)
+    ?(initial_delay = 0.)
+    () =
   let rec loop () =
     (match Database.with_connection ?uri ~sw ~stdenv @@ fun conn ->
        User_repository.next_unclassified_user conn with
@@ -107,4 +117,6 @@ let start ~sw ~clock ~stdenv ~ephemeral_pool ~env ?uri ?(relays = Config.periodi
     Eio.Time.sleep clock interval;
     loop ()
   in
-  Fiber.fork ~sw (fun () -> loop ())
+  Fiber.fork ~sw (fun () ->
+    if initial_delay > 0. then Eio.Time.sleep clock initial_delay;
+    loop ())

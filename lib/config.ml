@@ -9,8 +9,10 @@ let publish_relays = [
 
 let subscribe_relays = [
   "https://relay.damus.io";
+  (* "https://x.kojira.io"; *)
+  (* "https://relay.primal.net/";
   "https://nos.lol";
-  "https://relay.nostr.band";
+  "https://relay.nostr.band"; *)
 ]
 
 let periodic_relays = [
@@ -23,8 +25,6 @@ let all_relays =
   List.sort_uniq String.compare (publish_relays @ subscribe_relays @ periodic_relays)
 
 (* Reconnection settings *)
-let reconnect_delay = 20.0
+let reconnect_delay = 60.0
 
-(* Keep-alive settings *)
-let keepalive_interval = 30.0  (* Send keepalive REQ every 30 seconds *)
 let eose_timeout = 10.0        (* Wait 10 seconds for EOSE response *)

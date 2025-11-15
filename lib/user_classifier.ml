@@ -117,7 +117,19 @@ let retry_db_operation ~clock f max_retries delay =
   in
   loop max_retries
 
-let start ~sw ~clock ~stdenv ~ephemeral_pool ~env ?uri ?(relays = Config.periodic_relays) ?(interval = 300.) () =
+let start
+    ~sw
+    ~clock
+    ~stdenv
+    ~ephemeral_pool
+    ~env
+    ?uri
+    ?(relays = Config.periodic_relays)
+    ?(kana_interval = 600.)
+    ?(old_interval = 600.)
+    ?(kana_start_delay = 0.)
+    ?(old_start_delay = 30.)
+    () =
   let rec kana_check_loop () =
     (match retry_db_operation ~clock (fun () ->
        Database.with_connection ?uri ~sw ~stdenv @@ fun conn ->
@@ -133,7 +145,7 @@ let start ~sw ~clock ~stdenv ~ephemeral_pool ~env ?uri ?(relays = Config.periodi
           traceln "Failed to decode npub %s for kana check: %s" npub msg)
      | Ok None -> ()
      | Error err -> traceln "kana check fetch failed: %a" Caqti_error.pp err);
-    Eio.Time.sleep clock interval;
+    Eio.Time.sleep clock kana_interval;
     kana_check_loop ()
   in
 
@@ -152,11 +164,13 @@ let start ~sw ~clock ~stdenv ~ephemeral_pool ~env ?uri ?(relays = Config.periodi
           traceln "Failed to decode npub %s for old kind1 check: %s" npub msg)
      | Ok None -> ()
      | Error err -> traceln "old kind1 check fetch failed: %a" Caqti_error.pp err);
-    Eio.Time.sleep clock interval;
+    Eio.Time.sleep clock old_interval;
     old_kind1_check_loop ()
   in
 
-  Fiber.fork ~sw (fun () -> kana_check_loop ());
   Fiber.fork ~sw (fun () ->
-    Eio.Time.sleep clock 30.;  (* Wait 15 seconds before starting *)
+    if kana_start_delay > 0. then Eio.Time.sleep clock kana_start_delay;
+    kana_check_loop ());
+  Fiber.fork ~sw (fun () ->
+    if old_start_delay > 0. then Eio.Time.sleep clock old_start_delay;
     old_kind1_check_loop ())
