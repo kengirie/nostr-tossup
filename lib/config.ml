@@ -9,16 +9,12 @@ let publish_relays = [
 
 let subscribe_relays = [
   "https://relay.damus.io";
-  (* "https://x.kojira.io"; *)
-  (* "https://relay.primal.net/";
-  "https://nos.lol";
-  "https://relay.nostr.band"; *)
+    "https://nos.lol";
 ]
 
 let periodic_relays = [
-  "https://nos.lol";
-  "https://nostr.mom";
   "https://relay.damus.io";
+  "https://relay.nostr.band";
 ]
 
 let all_relays =

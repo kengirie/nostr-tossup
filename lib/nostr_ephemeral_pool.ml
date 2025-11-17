@@ -97,8 +97,12 @@ let collect_from_relay t ~env ~sw ~clock ~relay_url ~filters ~timeout ?label () 
                     (match Nostr_subscribe.event_id event_json with
                      | Some id when not (Hashtbl.mem known_ids id) ->
                        Hashtbl.add known_ids id ();
-                       events := event_json :: !events
-                     | _ -> ());
+                       events := event_json :: !events;
+                       traceln "[%s] Ephemeral sub %s received event: %s" relay sub_id id
+                     | Some id ->
+                       traceln "[%s] Ephemeral sub %s duplicate event: %s" relay sub_id id
+                     | None ->
+                       traceln "[%s] Ephemeral sub %s received event without id" relay sub_id);
                     reader_loop ()
                   | `List [ `String "EOSE"; `String sid ] when sid = sub_id ->
                     traceln "[%s] Ephemeral sub %s received EOSE" relay sub_id;

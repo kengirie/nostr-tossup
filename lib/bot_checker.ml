@@ -67,13 +67,8 @@ let fetch_kind0_event ~env ~clock ~ephemeral_pool ~relays ~timeout pubkey_hex =
 let classify_npub ~sw ~stdenv ~ephemeral_pool ~env ~clock ~relays ?uri npub_hex npub =
   match fetch_kind0_event ~env ~clock ~ephemeral_pool ~relays ~timeout:30. npub_hex with
   | None ->
-    traceln "No kind0 event found for %s, marking as existing_user=1" npub;
-    Database.with_connection ?uri ~sw ~stdenv @@ fun conn ->
-    (match User_repository.update_existing_user conn ~npub ~existing_user:1 with
-     | Ok () ->
-       traceln "Updated %s existing_user=1" npub;
-       Ok ()
-     | Error err -> Error err)
+    traceln "No kind0 event found for %s, skipping classification" npub;
+    Ok ()
   | Some event ->
     let is_bot = if event_indicates_bot event then 1 else 0 in
     Database.with_connection ?uri ~sw ~stdenv @@ fun conn ->
